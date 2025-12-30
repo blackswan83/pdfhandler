@@ -3,6 +3,7 @@
 //  PDFHandler
 //
 //  Main application view
+//  Design: Terminal precision meets calligraphic craft
 //
 
 import SwiftUI
@@ -11,18 +12,23 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) var colorScheme
     @State private var isDragging = false
 
     var body: some View {
         NavigationSplitView {
-            SidebarView()
+            SumiSidebarView()
                 .frame(minWidth: 200)
         } detail: {
             ZStack {
+                // Background
+                (colorScheme == .dark ? Color.charcoal : Color.paperBackground)
+                    .ignoresSafeArea()
+
                 if appState.selectedPDFs.isEmpty {
-                    DropZoneView(isDragging: $isDragging)
+                    SumiDropZoneView(isDragging: $isDragging)
                 } else {
-                    MainWorkspaceView()
+                    SumiWorkspaceView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -30,22 +36,33 @@ struct ContentView: View {
         .navigationSplitViewStyle(.balanced)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                // Minimal text buttons
                 Button(action: { appState.showFilePicker = true }) {
-                    Label("Open PDF", systemImage: "doc.badge.plus")
+                    Text("open")
+                        .font(SumiTypography.mono)
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(colorScheme == .dark ? .white : .stonegrey)
                 .keyboardShortcut("o", modifiers: .command)
 
                 if !appState.selectedPDFs.isEmpty {
-                    Divider()
+                    Text("·")
+                        .foregroundStyle(.stonegrey)
 
                     Button(action: { appState.convertCurrentPDF() }) {
-                        Label("Convert to Markdown", systemImage: "doc.text")
+                        Text("convert")
+                            .font(SumiTypography.mono)
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
                     .disabled(appState.isConverting)
 
                     Button(action: { appState.compressCurrentPDF() }) {
-                        Label("Compress", systemImage: "arrow.down.right.and.arrow.up.left")
+                        Text("compress")
+                            .font(SumiTypography.mono)
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(colorScheme == .dark ? .white : .stonegrey)
                     .disabled(appState.isCompressing)
                 }
             }
@@ -72,38 +89,32 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $appState.showPreview) {
-            MarkdownPreviewSheet()
+            SumiMarkdownPreviewSheet()
         }
     }
 
     private func handleDrop(providers: [NSItemProvider]) {
         var urls: [URL] = []
-
         let group = DispatchGroup()
 
         for provider in providers {
             group.enter()
 
             if provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.pdf.identifier, options: nil) { item, error in
+                provider.loadItem(forTypeIdentifier: UTType.pdf.identifier, options: nil) { item, _ in
                     defer { group.leave() }
-
                     if let url = item as? URL {
                         urls.append(url)
-                    } else if let data = item as? Data {
-                        // Handle data if needed
                     }
                 }
             } else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                     defer { group.leave() }
-
                     if let data = item as? Data,
                        let path = String(data: data, encoding: .utf8),
-                       let url = URL(string: path) {
-                        if url.pathExtension.lowercased() == "pdf" {
-                            urls.append(url)
-                        }
+                       let url = URL(string: path),
+                       url.pathExtension.lowercased() == "pdf" {
+                        urls.append(url)
                     }
                 }
             } else {
@@ -119,72 +130,97 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Drop Zone View
+// MARK: - Sumi Drop Zone
 
-struct DropZoneView: View {
+struct SumiDropZoneView: View {
     @Binding var isDragging: Bool
     @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
-        VStack(spacing: 24) {
-            Image(systemName: "doc.richtext")
-                .font(.system(size: 80))
-                .foregroundStyle(isDragging ? .blue : .secondary)
-                .symbolEffect(.bounce, value: isDragging)
+        ZStack {
+            // Calligraphic watermark - visible when no file loaded
+            EnsoMark(opacity: 0.08, size: 300)
+                .opacity(isDragging ? 0 : 1)
+                .animation(.easeOut(duration: 0.3), value: isDragging)
 
-            Text("Drop PDF files here")
-                .font(.title2)
-                .fontWeight(.medium)
+            // Drop zone
+            VStack(spacing: 0) {
+                Spacer()
 
-            Text("or click to browse")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                // Command prompt style
+                HStack(spacing: 4) {
+                    Text("drop")
+                        .font(SumiTypography.command)
+                        .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
 
-            Button("Select PDFs") {
+                    Text(".pdf")
+                        .font(SumiTypography.command)
+                        .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+
+                    CursorBlinkView(color: colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                        .opacity(isDragging ? 0 : 1)
+                }
+
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                RoundedRectangle(cornerRadius: 2)
+                    .strokeBorder(
+                        isDragging
+                            ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                            : (colorScheme == .dark ? Color(hex: "3A3A3C") : Color.mist),
+                        style: StrokeStyle(lineWidth: 1, dash: isDragging ? [] : [8, 4])
+                    )
+                    .padding(60)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
                 appState.showFilePicker = true
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background {
-            RoundedRectangle(cornerRadius: 20)
-                .strokeBorder(
-                    isDragging ? Color.blue : Color.secondary.opacity(0.3),
-                    style: StrokeStyle(lineWidth: 3, dash: [10])
-                )
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(isDragging ? Color.blue.opacity(0.1) : Color.clear)
-                )
-                .padding(40)
         }
         .animation(.easeInOut(duration: 0.2), value: isDragging)
     }
 }
 
-// MARK: - Sidebar View
+// MARK: - Sumi Sidebar
 
-struct SidebarView: View {
+struct SumiSidebarView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         List(selection: $appState.selectedTab) {
-            Section("Actions") {
+            Section {
                 ForEach(AppTab.allCases, id: \.self) { tab in
-                    Label(tab.rawValue, systemImage: iconForTab(tab))
-                        .tag(tab)
+                    HStack(spacing: 8) {
+                        Text(commandForTab(tab))
+                            .font(SumiTypography.mono)
+                            .foregroundStyle(
+                                appState.selectedTab == tab
+                                    ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                                    : (colorScheme == .dark ? .white : .inkBlack)
+                            )
+                    }
+                    .tag(tab)
                 }
+            } header: {
+                Text("commands")
+                    .font(SumiTypography.monoSmall)
+                    .foregroundStyle(.stonegrey)
             }
 
             if !appState.selectedPDFURLs.isEmpty {
-                Section("Open PDFs") {
+                Section {
                     ForEach(Array(appState.selectedPDFURLs.enumerated()), id: \.element) { index, url in
-                        HStack {
-                            Image(systemName: "doc.fill")
-                                .foregroundStyle(.red)
+                        HStack(spacing: 8) {
+                            Text("→")
+                                .font(SumiTypography.mono)
+                                .foregroundStyle(.stonegrey)
 
                             Text(url.lastPathComponent)
+                                .font(SumiTypography.mono)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
@@ -193,133 +229,146 @@ struct SidebarView: View {
                             appState.currentPDFIndex = index
                         }
                     }
+                } header: {
+                    Text("open")
+                        .font(SumiTypography.monoSmall)
+                        .foregroundStyle(.stonegrey)
                 }
             }
 
             if !appState.conversionResults.isEmpty {
-                Section("Recent Conversions") {
+                Section {
                     ForEach(appState.conversionResults.suffix(5)) { result in
-                        HStack {
-                            Image(systemName: "doc.text.fill")
-                                .foregroundStyle(.blue)
+                        HStack(spacing: 8) {
+                            Text("✓")
+                                .font(SumiTypography.mono)
+                                .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
 
-                            VStack(alignment: .leading) {
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(result.outputURL.lastPathComponent)
+                                    .font(SumiTypography.monoSmall)
                                     .lineLimit(1)
 
                                 Text("\(result.processingTime, specifier: "%.1f")s")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .font(SumiTypography.monoSmall)
+                                    .foregroundStyle(.stonegrey)
                             }
                         }
                     }
-                }
-            }
-
-            if !appState.compressionResults.isEmpty {
-                Section("Recent Compressions") {
-                    ForEach(appState.compressionResults.suffix(5)) { result in
-                        HStack {
-                            Image(systemName: "arrow.down.right.and.arrow.up.left")
-                                .foregroundStyle(.green)
-
-                            VStack(alignment: .leading) {
-                                Text(result.outputURL.lastPathComponent)
-                                    .lineLimit(1)
-
-                                Text("Saved \(result.formattedSavedSize)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+                } header: {
+                    Text("history")
+                        .font(SumiTypography.monoSmall)
+                        .foregroundStyle(.stonegrey)
                 }
             }
         }
         .listStyle(.sidebar)
-        .navigationTitle("PDF Handler")
+        .navigationTitle("sumi")
     }
 
-    private func iconForTab(_ tab: AppTab) -> String {
+    private func commandForTab(_ tab: AppTab) -> String {
         switch tab {
-        case .convert:
-            return "doc.text"
-        case .compress:
-            return "arrow.down.right.and.arrow.up.left"
-        case .batch:
-            return "square.stack.3d.up"
+        case .convert: return "./convert"
+        case .compress: return "./compress"
+        case .batch: return "./batch"
         }
     }
 }
 
-// MARK: - Main Workspace View
+// MARK: - Sumi Workspace
 
-struct MainWorkspaceView: View {
+struct SumiWorkspaceView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         HSplitView {
             // PDF Preview
-            PDFPreviewView()
+            SumiPDFPreviewView()
                 .frame(minWidth: 400)
 
             // Options Panel
-            VStack {
-                switch appState.selectedTab {
-                case .convert:
-                    ConversionOptionsView()
-                case .compress:
-                    CompressionOptionsView()
-                case .batch:
-                    BatchProcessingView()
+            ScrollView {
+                VStack {
+                    switch appState.selectedTab {
+                    case .convert:
+                        ConversionOptionsView()
+                    case .compress:
+                        CompressionOptionsView()
+                    case .batch:
+                        BatchProcessingView()
+                    }
                 }
+                .frame(minWidth: 300, maxWidth: 400)
+                .padding()
             }
-            .frame(minWidth: 300, maxWidth: 400)
-            .padding()
+            .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
         }
     }
 }
 
-// MARK: - PDF Preview View
+// MARK: - Sumi PDF Preview
 
-struct PDFPreviewView: View {
+struct SumiPDFPreviewView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
+            // Header - monospace file info
             HStack {
                 if let url = appState.currentPDFURL {
                     Text(url.lastPathComponent)
-                        .font(.headline)
+                        .font(SumiTypography.mono)
+                        .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
                         .lineLimit(1)
 
                     Spacer()
 
                     if let pdf = appState.currentPDF {
-                        Text("\(pdf.pageCount) pages")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        Text("\(pdf.pageCount)p")
+                            .font(SumiTypography.monoSmall)
+                            .foregroundStyle(.stonegrey)
+
+                        if let size = fileSize(for: url) {
+                            Text("·")
+                                .foregroundStyle(.stonegrey)
+                            Text(size)
+                                .font(SumiTypography.monoSmall)
+                                .foregroundStyle(.stonegrey)
+                        }
                     }
                 }
             }
-            .padding()
-            .background(.bar)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
 
-            Divider()
+            Rectangle()
+                .fill(colorScheme == .dark ? Color(hex: "3A3A3C") : Color.mist)
+                .frame(height: 1)
 
             // PDF View
             if let pdf = appState.currentPDF {
                 PDFKitView(document: pdf)
             } else {
-                ContentUnavailableView(
-                    "No PDF Selected",
-                    systemImage: "doc.questionmark",
-                    description: Text("Select a PDF from the sidebar")
-                )
+                VStack {
+                    Text("no file")
+                        .font(SumiTypography.mono)
+                        .foregroundStyle(.stonegrey)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
+    }
+
+    private func fileSize(for url: URL) -> String? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? Int64 else {
+            return nil
+        }
+        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 }
 
@@ -333,7 +382,7 @@ struct PDFKitView: NSViewRepresentable {
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
-        pdfView.backgroundColor = .controlBackgroundColor
+        pdfView.backgroundColor = .clear
         return pdfView
     }
 
@@ -342,44 +391,52 @@ struct PDFKitView: NSViewRepresentable {
     }
 }
 
-// MARK: - Markdown Preview Sheet
+// MARK: - Sumi Markdown Preview Sheet
 
-struct MarkdownPreviewSheet: View {
+struct SumiMarkdownPreviewSheet: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) var dismiss
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Markdown Preview")
-                    .font(.headline)
+                Text("output.md")
+                    .font(SumiTypography.mono)
+                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
 
                 Spacer()
 
-                Button("Copy") {
+                Button("copy") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(appState.previewMarkdown, forType: .string)
                 }
+                .buttonStyle(SumiTextButtonStyle())
 
-                Button("Done") {
+                Button("done") {
                     dismiss()
                 }
+                .buttonStyle(SumiTextButtonStyle(accent: true))
                 .keyboardShortcut(.defaultAction)
             }
             .padding()
-            .background(.bar)
+            .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
 
-            Divider()
+            Rectangle()
+                .fill(colorScheme == .dark ? Color(hex: "3A3A3C") : Color.mist)
+                .frame(height: 1)
 
             // Content
             ScrollView {
                 Text(appState.previewMarkdown)
-                    .font(.system(.body, design: .monospaced))
+                    .font(SumiTypography.mono)
+                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
             }
+            .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
         }
         .frame(minWidth: 600, minHeight: 400)
     }

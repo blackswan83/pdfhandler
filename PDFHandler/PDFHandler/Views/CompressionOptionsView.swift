@@ -3,93 +3,140 @@
 //  PDFHandler
 //
 //  Options panel for PDF compression
+//  Design: CLI precision with minimal aesthetics
 //
 
 import SwiftUI
 
 struct CompressionOptionsView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) var colorScheme
     @State private var compressionOptions = CompressionOptions()
     @State private var showAdvancedOptions = false
     @State private var preview: CompressionPreview?
     @State private var ghostscriptAvailable = false
+    @State private var showCompletionAnimation = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Header
-                Text("Compress PDF")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+        VStack(alignment: .leading, spacing: 24) {
+            // Header
+            Text("./compress")
+                .font(SumiTypography.monoTitle)
+                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
 
-                // Ghostscript status
-                if !ghostscriptAvailable {
-                    GhostscriptWarningView()
-                }
+            // Ghostscript status
+            if !ghostscriptAvailable {
+                SumiGhostscriptWarning()
+            }
 
-                // Document Info
-                if let url = appState.currentPDFURL {
-                    CompressionInfoCard(url: url, preview: preview)
-                }
+            // File info
+            if let url = appState.currentPDFURL {
+                SumiFileInfo(url: url, preview: preview)
+            }
 
-                Divider()
+            // Compression Slider
+            VStack(alignment: .leading, spacing: 16) {
+                // Size display
+                HStack(alignment: .bottom) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("original")
+                            .font(SumiTypography.monoSmall)
+                            .foregroundStyle(.stonegrey)
 
-                // Compression Slider
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Target Size")
-                        .font(.headline)
-
-                    CompressionSlider(
-                        value: $appState.targetCompressionRatio,
-                        preview: preview
-                    )
-                    .onChange(of: appState.targetCompressionRatio) { _, newValue in
-                        updatePreview()
-                        compressionOptions.preset = GhostscriptPreset.forRatio(newValue)
+                        if let preview = preview {
+                            Text(ByteCountFormatter.string(fromByteCount: preview.originalSize, countStyle: .file))
+                                .font(SumiTypography.mono)
+                                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                        } else {
+                            Text("--")
+                                .font(SumiTypography.mono)
+                                .foregroundStyle(.stonegrey)
+                        }
                     }
 
-                    // Preset indicator
-                    HStack {
-                        Text("Preset:")
-                            .foregroundStyle(.secondary)
+                    Spacer()
 
-                        Text(GhostscriptPreset.forRatio(appState.targetCompressionRatio).displayName)
-                            .fontWeight(.medium)
-                    }
-                    .font(.caption)
-                }
+                    Text("→")
+                        .font(SumiTypography.mono)
+                        .foregroundStyle(.stonegrey)
 
-                // Quick Presets
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Quick Presets")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    Spacer()
 
-                    HStack(spacing: 8) {
-                        ForEach(GhostscriptPreset.allCases, id: \.self) { preset in
-                            PresetButton(
-                                preset: preset,
-                                isSelected: compressionOptions.preset == preset
-                            ) {
-                                compressionOptions.preset = preset
-                                appState.targetCompressionRatio = preset.typicalRatioRange.lowerBound +
-                                    (preset.typicalRatioRange.upperBound - preset.typicalRatioRange.lowerBound) / 2
-                            }
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("target")
+                            .font(SumiTypography.monoSmall)
+                            .foregroundStyle(.stonegrey)
+
+                        if let preview = preview {
+                            Text(ByteCountFormatter.string(fromByteCount: preview.estimatedSize, countStyle: .file))
+                                .font(SumiTypography.mono)
+                                .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                        } else {
+                            Text("--")
+                                .font(SumiTypography.mono)
+                                .foregroundStyle(.stonegrey)
                         }
                     }
                 }
 
-                // Advanced Options
-                DisclosureGroup("Advanced Options", isExpanded: $showAdvancedOptions) {
-                    VStack(alignment: .leading, spacing: 16) {
-                        // DPI Setting
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text("Image DPI")
-                                Spacer()
-                                Text("\(compressionOptions.imageDPI)")
-                                    .foregroundStyle(.secondary)
-                            }
+                // Sumi Slider
+                SumiSlider(
+                    value: $appState.targetCompressionRatio,
+                    range: 0.1...1.0,
+                    label: "compression"
+                )
+                .onChange(of: appState.targetCompressionRatio) { _, newValue in
+                    updatePreview()
+                    compressionOptions.preset = GhostscriptPreset.forRatio(newValue)
+                }
+
+                // Preset label
+                HStack {
+                    Text("preset:")
+                        .font(SumiTypography.monoSmall)
+                        .foregroundStyle(.stonegrey)
+
+                    Text(presetName(for: appState.targetCompressionRatio))
+                        .font(SumiTypography.monoSmall)
+                        .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                }
+            }
+            .padding(16)
+            .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
+            .cornerRadius(4)
+
+            // Quick presets
+            VStack(alignment: .leading, spacing: 8) {
+                Text("presets")
+                    .font(SumiTypography.monoSmall)
+                    .foregroundStyle(.stonegrey)
+
+                HStack(spacing: 0) {
+                    ForEach(GhostscriptPreset.allCases, id: \.self) { preset in
+                        SumiPresetButton(
+                            preset: preset,
+                            isSelected: compressionOptions.preset == preset
+                        ) {
+                            compressionOptions.preset = preset
+                            let midpoint = preset.typicalRatioRange.lowerBound +
+                                (preset.typicalRatioRange.upperBound - preset.typicalRatioRange.lowerBound) / 2
+                            appState.targetCompressionRatio = midpoint
+                        }
+                    }
+                }
+            }
+
+            // Advanced options
+            DisclosureGroup(
+                isExpanded: $showAdvancedOptions,
+                content: {
+                    VStack(alignment: .leading, spacing: 12) {
+                        // DPI
+                        HStack {
+                            Text("dpi")
+                                .font(SumiTypography.monoSmall)
+                                .foregroundStyle(.stonegrey)
+                                .frame(width: 60, alignment: .leading)
 
                             Slider(
                                 value: Binding(
@@ -99,82 +146,99 @@ struct CompressionOptionsView: View {
                                 in: 50...300,
                                 step: 10
                             )
+                            .tint(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
 
-                            HStack {
-                                Text("50 DPI")
-                                Spacer()
-                                Text("300 DPI")
-                            }
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            Text("\(compressionOptions.imageDPI)")
+                                .font(SumiTypography.monoSmall)
+                                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                                .frame(width: 40, alignment: .trailing)
                         }
 
-                        Divider()
+                        // Grayscale
+                        HStack {
+                            Text("grayscale")
+                                .font(SumiTypography.monoSmall)
+                                .foregroundStyle(.stonegrey)
 
-                        // Color Image Compression
-                        Picker("Color Compression", selection: $compressionOptions.colorImageCompression) {
-                            ForEach(ColorImageCompression.allCases) { compression in
-                                Text(compression.displayName).tag(compression)
-                            }
-                        }
+                            Spacer()
 
-                        // Grayscale Toggle
-                        Toggle("Convert to Grayscale", isOn: $compressionOptions.convertToGrayscale)
-                            .help("Convert color images to grayscale for smaller file size")
-
-                        Divider()
-
-                        // Font Handling
-                        Picker("Font Handling", selection: $compressionOptions.fontHandling) {
-                            ForEach(FontHandling.allCases) { handling in
-                                Text(handling.displayName).tag(handling)
-                            }
+                            Toggle("", isOn: $compressionOptions.convertToGrayscale)
+                                .labelsHidden()
+                                .tint(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
                         }
 
                         // Metadata
-                        Toggle("Preserve Metadata", isOn: $compressionOptions.preserveMetadata)
-                            .help("Keep document title, author, and other metadata")
-                    }
-                    .padding(.top, 8)
-                }
+                        HStack {
+                            Text("keep metadata")
+                                .font(SumiTypography.monoSmall)
+                                .foregroundStyle(.stonegrey)
 
-                Divider()
+                            Spacer()
 
-                // Progress and Action
-                if appState.isCompressing {
-                    VStack(spacing: 8) {
-                        ProgressView(value: appState.compressionProgress) {
-                            Text("Compressing...")
+                            Toggle("", isOn: $compressionOptions.preserveMetadata)
+                                .labelsHidden()
+                                .tint(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
                         }
-
-                        Text("\(Int(appState.compressionProgress * 100))%")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-                } else {
+                    .padding(.top, 12)
+                },
+                label: {
+                    Text("--options")
+                        .font(SumiTypography.monoSmall)
+                        .foregroundStyle(.stonegrey)
+                }
+            )
+
+            Spacer()
+
+            // Progress or Action
+            if appState.isCompressing {
+                VStack(alignment: .leading, spacing: 8) {
+                    CLIProgressBar(
+                        progress: appState.compressionProgress,
+                        label: "compressing → \(Int(appState.compressionProgress * 100))%"
+                    )
+                }
+            } else {
+                // Action buttons - text only
+                HStack(spacing: 16) {
                     Button(action: {
                         appState.compressCurrentPDF()
                     }) {
-                        Label("Compress PDF", systemImage: "arrow.down.right.and.arrow.up.left")
-                            .frame(maxWidth: .infinity)
+                        Text("[compress]")
+                            .font(SumiTypography.mono)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
                     .disabled(appState.currentPDF == nil || !ghostscriptAvailable)
-                }
 
-                // Last Result
-                if let lastResult = appState.compressionResults.last {
-                    CompressionResultCard(result: lastResult)
+                    Button(action: {
+                        appState.targetCompressionRatio = 0.5
+                        compressionOptions = CompressionOptions()
+                    }) {
+                        Text("[reset]")
+                            .font(SumiTypography.mono)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.stonegrey)
                 }
-
-                Spacer()
             }
-            .padding()
+
+            // Last result
+            if let lastResult = appState.compressionResults.last {
+                SumiCompressionResult(result: lastResult)
+                    .inkDissolve(isActive: showCompletionAnimation)
+            }
         }
         .task {
             await checkGhostscript()
             updatePreview()
+        }
+        .onChange(of: appState.compressionResults.count) { _, _ in
+            showCompletionAnimation = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                showCompletionAnimation = false
+            }
         }
     }
 
@@ -194,334 +258,192 @@ struct CompressionOptionsView: View {
             )
         }
     }
+
+    private func presetName(for ratio: Double) -> String {
+        switch ratio {
+        case 0.90...1.0: return "prepress"
+        case 0.60..<0.90: return "printer"
+        case 0.30..<0.60: return "ebook"
+        default: return "screen"
+        }
+    }
 }
 
-// MARK: - Compression Slider
+// MARK: - Sumi File Info
 
-struct CompressionSlider: View {
-    @Binding var value: Double
+struct SumiFileInfo: View {
+    let url: URL
     let preview: CompressionPreview?
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
-        VStack(spacing: 12) {
-            // Size indicators
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Original")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        HStack {
+            Text(url.lastPathComponent)
+                .font(SumiTypography.mono)
+                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                .lineLimit(1)
+                .truncationMode(.middle)
 
-                    if let preview = preview {
-                        Text(ByteCountFormatter.string(fromByteCount: preview.originalSize, countStyle: .file))
-                            .font(.headline)
-                    } else {
-                        Text("--")
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            Spacer()
 
-                Spacer()
-
-                Image(systemName: "arrow.right")
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                VStack(alignment: .trailing) {
-                    Text("Target")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if let preview = preview {
-                        Text(ByteCountFormatter.string(fromByteCount: preview.estimatedSize, countStyle: .file))
-                            .font(.headline)
-                            .foregroundStyle(.blue)
-                    } else {
-                        Text("--")
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            // Slider
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    // Background gradient
-                    LinearGradient(
-                        gradient: Gradient(colors: [.green, .yellow, .orange, .red]),
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .frame(height: 8)
-                    .cornerRadius(4)
-
-                    // Slider track overlay
-                    Slider(value: $value, in: 0.1...1.0)
-                        .tint(.clear)
-                }
-            }
-            .frame(height: 30)
-
-            // Labels
-            HStack {
-                Text("Maximum\nCompression")
-                    .multilineTextAlignment(.leading)
-
-                Spacer()
-
-                Text("\(Int(value * 100))%")
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.blue)
-
-                Spacer()
-
-                Text("Maximum\nQuality")
-                    .multilineTextAlignment(.trailing)
-            }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
-
-            // Quality indicator
             if let preview = preview {
-                HStack {
-                    Circle()
-                        .fill(colorForQuality(preview.qualityIndicator))
-                        .frame(width: 8, height: 8)
-
-                    Text("Expected quality: \(preview.qualityIndicator.rawValue)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(ByteCountFormatter.string(fromByteCount: preview.originalSize, countStyle: .file))
+                    .font(SumiTypography.monoSmall)
+                    .foregroundStyle(.stonegrey)
             }
         }
-        .padding()
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
-    }
-
-    private func colorForQuality(_ indicator: CompressionPreview.QualityIndicator) -> Color {
-        switch indicator {
-        case .excellent: return .green
-        case .good: return .blue
-        case .acceptable: return .orange
-        case .noticeable: return .red
-        }
+        .padding(12)
+        .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
+        .cornerRadius(4)
     }
 }
 
-// MARK: - Preset Button
+// MARK: - Sumi Preset Button
 
-struct PresetButton: View {
+struct SumiPresetButton: View {
     let preset: GhostscriptPreset
     let isSelected: Bool
     let action: () -> Void
+    @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: iconForPreset(preset))
-                    .font(.title3)
-
-                Text(shortName(preset))
-                    .font(.caption2)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .background(isSelected ? Color.blue.opacity(0.2) : Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 2)
-            )
+            Text(shortName)
+                .font(SumiTypography.monoSmall)
+                .foregroundStyle(
+                    isSelected
+                        ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                        : .stonegrey
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(
+                    isSelected
+                        ? (colorScheme == .dark ? Color.phosphorGreen.opacity(0.1) : Color.terminalGreen.opacity(0.1))
+                        : Color.clear
+                )
         }
         .buttonStyle(.plain)
     }
 
-    private func iconForPreset(_ preset: GhostscriptPreset) -> String {
+    private var shortName: String {
         switch preset {
-        case .prepress: return "printer.filled.and.paper"
+        case .prepress: return "prepress"
         case .printer: return "printer"
-        case .ebook: return "ipad"
-        case .screen: return "globe"
-        }
-    }
-
-    private func shortName(_ preset: GhostscriptPreset) -> String {
-        switch preset {
-        case .prepress: return "Prepress"
-        case .printer: return "Printer"
-        case .ebook: return "eBook"
-        case .screen: return "Screen"
+        case .ebook: return "ebook"
+        case .screen: return "screen"
         }
     }
 }
 
-// MARK: - Compression Info Card
+// MARK: - Sumi Compression Result
 
-struct CompressionInfoCard: View {
-    let url: URL
-    let preview: CompressionPreview?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "doc.fill")
-                    .foregroundStyle(.red)
-
-                Text(url.lastPathComponent)
-                    .font(.headline)
-                    .lineLimit(1)
-
-                Spacer()
-
-                if let preview = preview {
-                    VStack(alignment: .trailing) {
-                        Text(ByteCountFormatter.string(fromByteCount: preview.originalSize, countStyle: .file))
-                            .font(.headline)
-
-                        Text("current size")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
-    }
-}
-
-// MARK: - Compression Result Card
-
-struct CompressionResultCard: View {
+struct SumiCompressionResult: View {
     let result: CompressionResult
+    @Environment(\.colorScheme) var colorScheme
+    @State private var cursorBlink = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+            // Success line
+            HStack(spacing: 4) {
+                Text("✓")
+                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
 
-                Text("Compression Complete")
-                    .font(.headline)
+                Text("done")
+                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
 
-                Spacer()
+                Text("in \(String(format: "%.1f", result.processingTime))s")
+                    .foregroundStyle(.stonegrey)
 
-                Text(String(format: "%.1fs", result.processingTime))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // Blinking cursor
+                Rectangle()
+                    .fill(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                    .frame(width: 2, height: 12)
+                    .opacity(cursorBlink ? 1 : 0)
+                    .onAppear {
+                        // Blink twice then stop
+                        withAnimation(.easeInOut(duration: 0.3).repeatCount(4, autoreverses: true)) {
+                            cursorBlink = false
+                        }
+                    }
             }
-
-            Divider()
+            .font(SumiTypography.mono)
 
             // Size comparison
-            HStack(spacing: 20) {
-                VStack {
-                    Text(result.formattedOriginalSize)
-                        .font(.title3)
+            HStack(spacing: 8) {
+                Text(result.formattedOriginalSize)
+                    .foregroundStyle(.stonegrey)
 
-                    Text("Original")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("→")
+                    .foregroundStyle(.stonegrey)
 
-                Image(systemName: "arrow.right")
-                    .foregroundStyle(.secondary)
+                Text(result.formattedCompressedSize)
+                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
 
-                VStack {
-                    Text(result.formattedCompressedSize)
-                        .font(.title3)
-                        .foregroundStyle(.green)
-
-                    Text("Compressed")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                VStack {
-                    Text("-\(Int(result.savedPercentage))%")
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.green)
-
-                    Text("Saved \(result.formattedSavedSize)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("(-\(Int(result.savedPercentage))%)")
+                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
             }
+            .font(SumiTypography.monoSmall)
 
-            if !result.warnings.isEmpty {
-                Divider()
-
-                ForEach(result.warnings) { warning in
-                    Label(warning.message, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-            }
-
-            HStack {
-                Button("Show in Finder") {
+            // Actions
+            HStack(spacing: 12) {
+                Button(action: {
                     NSWorkspace.shared.selectFile(result.outputURL.path, inFileViewerRootedAtPath: "")
+                }) {
+                    Text("[reveal]")
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
+                .foregroundStyle(.stonegrey)
 
-                Spacer()
-
-                Button("Open") {
+                Button(action: {
                     NSWorkspace.shared.open(result.outputURL)
+                }) {
+                    Text("[open]")
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
+                .foregroundStyle(.stonegrey)
             }
-            .font(.caption)
+            .font(SumiTypography.monoSmall)
         }
-        .padding()
-        .background(Color.green.opacity(0.1))
-        .cornerRadius(8)
+        .padding(12)
+        .background(
+            (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                .opacity(0.05)
+        )
+        .cornerRadius(4)
     }
 }
 
-// MARK: - Ghostscript Warning
+// MARK: - Sumi Ghostscript Warning
 
-struct GhostscriptWarningView: View {
+struct SumiGhostscriptWarning: View {
+    @Environment(\.colorScheme) var colorScheme
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Ghostscript Not Found", systemImage: "exclamationmark.triangle.fill")
-                .font(.headline)
-                .foregroundStyle(.orange)
+            HStack(spacing: 4) {
+                Text("!")
+                    .foregroundStyle(.orange)
+                Text("ghostscript not found")
+                    .foregroundStyle(.orange)
+            }
+            .font(SumiTypography.mono)
 
-            Text("PDF compression requires Ghostscript to be installed.")
-                .font(.subheadline)
-
-            Text("Install via Homebrew:")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Text("brew install ghostscript")
-                    .font(.system(.caption, design: .monospaced))
-                    .padding(8)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .cornerRadius(4)
-
-                Button(action: {
+            Text("brew install ghostscript")
+                .font(SumiTypography.monoSmall)
+                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                .padding(8)
+                .background(colorScheme == .dark ? Color.sumiGrey : Color.ashGrey.opacity(0.5))
+                .cornerRadius(2)
+                .onTapGesture {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString("brew install ghostscript", forType: .string)
-                }) {
-                    Image(systemName: "doc.on.clipboard")
                 }
-                .buttonStyle(.borderless)
-            }
         }
-        .padding()
+        .padding(12)
         .background(Color.orange.opacity(0.1))
-        .cornerRadius(8)
+        .cornerRadius(4)
     }
 }
 
@@ -529,4 +451,5 @@ struct GhostscriptWarningView: View {
     CompressionOptionsView()
         .environmentObject(AppState())
         .frame(width: 350, height: 700)
+        .background(Color.paperBackground)
 }

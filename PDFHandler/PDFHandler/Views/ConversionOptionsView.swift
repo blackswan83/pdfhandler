@@ -3,219 +3,292 @@
 //  PDFHandler
 //
 //  Options panel for PDF to Markdown conversion
+//  Design: CLI precision meets calligraphic craft
 //
 
 import SwiftUI
 
 struct ConversionOptionsView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) var colorScheme
     @State private var showAdvancedOptions = false
     @State private var conversionOptions = ConversionOptions()
+    @State private var showCompletionAnimation = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Header
-                Text("Convert to Markdown")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+        VStack(alignment: .leading, spacing: 24) {
+            // Header
+            Text("./convert")
+                .font(SumiTypography.monoTitle)
+                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
 
-                // Document Info
-                if let pdf = appState.currentPDF, let url = appState.currentPDFURL {
-                    DocumentInfoCard(pdf: pdf, url: url)
-                }
+            // Document Info
+            if let pdf = appState.currentPDF, let url = appState.currentPDFURL {
+                SumiDocumentInfo(pdf: pdf, url: url)
+            }
 
-                Divider()
+            // Basic Options
+            VStack(alignment: .leading, spacing: 12) {
+                Text("--flags")
+                    .font(SumiTypography.monoSmall)
+                    .foregroundStyle(.stonegrey)
 
-                // Basic Options
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Output Options")
-                        .font(.headline)
+                SumiToggleOption(
+                    label: "yaml frontmatter",
+                    isOn: $conversionOptions.includeYAMLFrontmatter
+                )
 
-                    Toggle("Include YAML Frontmatter", isOn: $conversionOptions.includeYAMLFrontmatter)
-                        .help("Add metadata (title, author, date) at the beginning of the Markdown file")
+                SumiToggleOption(
+                    label: "extract images",
+                    isOn: $conversionOptions.extractImages
+                )
 
-                    Toggle("Extract Images", isOn: $conversionOptions.extractImages)
-                        .help("Save embedded images to a companion folder")
+                SumiToggleOption(
+                    label: "preserve links",
+                    isOn: $conversionOptions.preserveLinks
+                )
 
-                    Toggle("Preserve Hyperlinks", isOn: $conversionOptions.preserveLinks)
-                        .help("Convert PDF links to Markdown links")
+                SumiToggleOption(
+                    label: "ocr scanned pages",
+                    isOn: $conversionOptions.performOCR
+                )
+            }
+            .padding(16)
+            .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
+            .cornerRadius(4)
 
-                    Toggle("Perform OCR on Scanned Pages", isOn: $conversionOptions.performOCR)
-                        .help("Use optical character recognition for image-based pages")
-                }
+            // Image settings (if extracting)
+            if conversionOptions.extractImages {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("--image-format")
+                        .font(SumiTypography.monoSmall)
+                        .foregroundStyle(.stonegrey)
 
-                if conversionOptions.extractImages {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Image Settings")
-                            .font(.headline)
-
-                        Picker("Format", selection: $conversionOptions.imageOutputFormat) {
-                            ForEach(ImageFormat.allCases) { format in
-                                Text(format.displayName).tag(format)
+                    HStack(spacing: 0) {
+                        ForEach(ImageFormat.allCases) { format in
+                            Button(action: {
+                                conversionOptions.imageOutputFormat = format
+                            }) {
+                                Text(format.rawValue)
+                                    .font(SumiTypography.monoSmall)
+                                    .foregroundStyle(
+                                        conversionOptions.imageOutputFormat == format
+                                            ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                                            : .stonegrey
+                                    )
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        conversionOptions.imageOutputFormat == format
+                                            ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen).opacity(0.1)
+                                            : Color.clear
+                                    )
                             }
-                        }
-                        .pickerStyle(.segmented)
-
-                        Picker("Naming", selection: $conversionOptions.imageNamingConvention) {
-                            ForEach(ImageNamingConvention.allCases) { convention in
-                                Text(convention.displayName).tag(convention)
-                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .padding()
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .cornerRadius(8)
                 }
+            }
 
-                // Advanced Options
-                DisclosureGroup("Advanced Options", isExpanded: $showAdvancedOptions) {
+            // Advanced Options
+            DisclosureGroup(
+                isExpanded: $showAdvancedOptions,
+                content: {
                     VStack(alignment: .leading, spacing: 12) {
-                        Picker("Table Fallback", selection: $conversionOptions.tableFallbackMode) {
-                            ForEach(TableFallbackMode.allCases) { mode in
-                                Text(mode.displayName).tag(mode)
+                        // Table fallback
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("table fallback")
+                                .font(SumiTypography.monoSmall)
+                                .foregroundStyle(.stonegrey)
+
+                            HStack(spacing: 0) {
+                                ForEach(TableFallbackMode.allCases) { mode in
+                                    Button(action: {
+                                        conversionOptions.tableFallbackMode = mode
+                                    }) {
+                                        Text(shortModeName(mode))
+                                            .font(SumiTypography.monoSmall)
+                                            .foregroundStyle(
+                                                conversionOptions.tableFallbackMode == mode
+                                                    ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                                                    : .stonegrey
+                                            )
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 6)
+                                            .background(
+                                                conversionOptions.tableFallbackMode == mode
+                                                    ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen).opacity(0.1)
+                                                    : Color.clear
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
                         }
-                        .help("How to render complex tables that don't convert cleanly to Markdown")
 
+                        // OCR Languages
                         if conversionOptions.performOCR {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("OCR Languages")
-                                    .font(.subheadline)
+                                Text("ocr languages")
+                                    .font(SumiTypography.monoSmall)
+                                    .foregroundStyle(.stonegrey)
 
-                                TextField("Languages", text: Binding(
-                                    get: { conversionOptions.ocrLanguages.joined(separator: ", ") },
-                                    set: { conversionOptions.ocrLanguages = $0.components(separatedBy: ", ").map { $0.trimmingCharacters(in: .whitespaces) } }
-                                ))
-                                .textFieldStyle(.roundedBorder)
-
-                                Text("e.g., en-US, de-DE, fr-FR")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                TextField(
+                                    "en-US",
+                                    text: Binding(
+                                        get: { conversionOptions.ocrLanguages.joined(separator: ", ") },
+                                        set: {
+                                            conversionOptions.ocrLanguages = $0
+                                                .components(separatedBy: ",")
+                                                .map { $0.trimmingCharacters(in: .whitespaces) }
+                                        }
+                                    )
+                                )
+                                .font(SumiTypography.mono)
+                                .textFieldStyle(.plain)
+                                .padding(8)
+                                .background(colorScheme == .dark ? Color.charcoal : Color.ashGrey.opacity(0.3))
+                                .cornerRadius(2)
                             }
                         }
                     }
-                    .padding(.top, 8)
+                    .padding(.top, 12)
+                },
+                label: {
+                    Text("--advanced")
+                        .font(SumiTypography.monoSmall)
+                        .foregroundStyle(.stonegrey)
                 }
+            )
 
-                Divider()
+            Spacer()
 
-                // Progress and Action
-                if appState.isConverting {
-                    VStack(spacing: 8) {
-                        ProgressView(value: appState.conversionProgress) {
-                            Text("Converting...")
-                        }
-
-                        Text("\(Int(appState.conversionProgress * 100))%")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
+            // Progress or Action
+            if appState.isConverting {
+                VStack(alignment: .leading, spacing: 8) {
+                    CLIProgressBar(
+                        progress: appState.conversionProgress,
+                        label: "converting → \(Int(appState.conversionProgress * 100))%"
+                    )
+                }
+            } else {
+                // Action buttons - text only
+                HStack(spacing: 16) {
                     Button(action: {
                         startConversion()
                     }) {
-                        Label("Convert to Markdown", systemImage: "doc.text")
-                            .frame(maxWidth: .infinity)
+                        Text("[convert]")
+                            .font(SumiTypography.mono)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
                     .disabled(appState.currentPDF == nil)
-                }
 
-                // Last Result
-                if let lastResult = appState.conversionResults.last {
-                    ConversionResultCard(result: lastResult)
+                    Button(action: {
+                        conversionOptions = ConversionOptions()
+                    }) {
+                        Text("[reset]")
+                            .font(SumiTypography.mono)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.stonegrey)
                 }
-
-                Spacer()
             }
-            .padding()
+
+            // Last Result
+            if let lastResult = appState.conversionResults.last {
+                SumiConversionResult(result: lastResult)
+            }
+        }
+        .onChange(of: appState.conversionResults.count) { _, _ in
+            showCompletionAnimation = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                showCompletionAnimation = false
+            }
         }
     }
 
     private func startConversion() {
-        // Apply current options to AppState
         appState.includeYAMLFrontmatter = conversionOptions.includeYAMLFrontmatter
         appState.imageOutputFormat = conversionOptions.imageOutputFormat.rawValue
-
         appState.convertCurrentPDF()
+    }
+
+    private func shortModeName(_ mode: TableFallbackMode) -> String {
+        switch mode {
+        case .codeBlock: return "code"
+        case .csv: return "csv"
+        case .html: return "html"
+        }
     }
 }
 
-// MARK: - Document Info Card
+// MARK: - Sumi Document Info
 
-struct DocumentInfoCard: View {
+struct SumiDocumentInfo: View {
     let pdf: PDFDocument
     let url: URL
-
+    @Environment(\.colorScheme) var colorScheme
     @State private var metadata: DocumentMetadata?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // File name
             HStack {
-                Image(systemName: "doc.fill")
-                    .foregroundStyle(.red)
-                    .font(.title2)
-
-                VStack(alignment: .leading) {
-                    Text(url.lastPathComponent)
-                        .font(.headline)
-                        .lineLimit(1)
-
-                    Text(formattedFileSize)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(url.lastPathComponent)
+                    .font(SumiTypography.mono)
+                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
 
                 Spacer()
 
-                VStack(alignment: .trailing) {
-                    Text("\(pdf.pageCount)")
-                        .font(.title2)
-                        .fontWeight(.semibold)
+                Text("\(pdf.pageCount)p")
+                    .font(SumiTypography.monoSmall)
+                    .foregroundStyle(.stonegrey)
 
-                    Text("pages")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("·")
+                    .foregroundStyle(.stonegrey)
+
+                Text(formattedFileSize)
+                    .font(SumiTypography.monoSmall)
+                    .foregroundStyle(.stonegrey)
             }
 
+            // Metadata indicators
             if let metadata = metadata {
-                Divider()
-
-                VStack(alignment: .leading, spacing: 4) {
-                    if let title = metadata.title, !title.isEmpty {
-                        Label(title, systemImage: "text.quote")
-                            .font(.caption)
-                    }
-
-                    if let author = metadata.author, !author.isEmpty {
-                        Label(author, systemImage: "person")
-                            .font(.caption)
-                    }
-
-                    HStack {
-                        if metadata.hasText {
-                            Label("Has Text", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                        } else {
-                            Label("No Text", systemImage: "xmark.circle.fill")
+                HStack(spacing: 12) {
+                    if metadata.hasText {
+                        HStack(spacing: 4) {
+                            Text("✓")
+                                .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                            Text("text")
+                                .foregroundStyle(.stonegrey)
+                        }
+                    } else {
+                        HStack(spacing: 4) {
+                            Text("×")
                                 .foregroundStyle(.orange)
-                        }
-
-                        if metadata.isScanned {
-                            Label("Scanned", systemImage: "doc.viewfinder")
-                                .foregroundStyle(.blue)
+                            Text("no text")
+                                .foregroundStyle(.stonegrey)
                         }
                     }
-                    .font(.caption)
+
+                    if metadata.isScanned {
+                        HStack(spacing: 4) {
+                            Text("◎")
+                                .foregroundStyle(.stonegrey)
+                            Text("scanned")
+                                .foregroundStyle(.stonegrey)
+                        }
+                    }
                 }
+                .font(SumiTypography.monoSmall)
             }
         }
-        .padding()
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
+        .padding(12)
+        .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
+        .cornerRadius(4)
         .task {
             await loadMetadata()
         }
@@ -224,7 +297,7 @@ struct DocumentInfoCard: View {
     private var formattedFileSize: String {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = attributes[.size] as? Int64 else {
-            return "Unknown size"
+            return "--"
         }
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
@@ -235,89 +308,151 @@ struct DocumentInfoCard: View {
     }
 }
 
-// MARK: - Conversion Result Card
+// MARK: - Sumi Toggle Option
 
-struct ConversionResultCard: View {
+struct SumiToggleOption: View {
+    let label: String
+    @Binding var isOn: Bool
+    @Environment(\.colorScheme) var colorScheme
+
+    var body: some View {
+        HStack {
+            Text(isOn ? "[x]" : "[ ]")
+                .font(SumiTypography.mono)
+                .foregroundStyle(
+                    isOn
+                        ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                        : .stonegrey
+                )
+
+            Text(label)
+                .font(SumiTypography.monoSmall)
+                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isOn.toggle()
+        }
+    }
+}
+
+// MARK: - Sumi Conversion Result
+
+struct SumiConversionResult: View {
     let result: ConversionResult
+    @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) var colorScheme
+    @State private var cursorBlink = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+            // Success line
+            HStack(spacing: 4) {
+                Text("✓")
+                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
 
-                Text("Conversion Complete")
-                    .font(.headline)
+                Text("done")
+                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
 
-                Spacer()
+                Text("in \(String(format: "%.1f", result.processingTime))s")
+                    .foregroundStyle(.stonegrey)
 
-                Text(String(format: "%.1fs", result.processingTime))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Output:")
-                    Text(result.outputURL.lastPathComponent)
-                        .foregroundStyle(.secondary)
-                }
-
-                if !result.extractedImages.isEmpty {
-                    HStack {
-                        Text("Images:")
-                        Text("\(result.extractedImages.count) extracted")
-                            .foregroundStyle(.secondary)
+                Rectangle()
+                    .fill(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                    .frame(width: 2, height: 12)
+                    .opacity(cursorBlink ? 1 : 0)
+                    .onAppear {
+                        withAnimation(.easeInOut(duration: 0.3).repeatCount(4, autoreverses: true)) {
+                            cursorBlink = false
+                        }
                     }
+            }
+            .font(SumiTypography.mono)
+
+            // Output info
+            HStack(spacing: 8) {
+                Text("→")
+                    .foregroundStyle(.stonegrey)
+
+                Text(result.outputURL.lastPathComponent)
+                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+            }
+            .font(SumiTypography.monoSmall)
+
+            // Stats
+            HStack(spacing: 16) {
+                if !result.extractedImages.isEmpty {
+                    Text("\(result.extractedImages.count) images")
+                        .foregroundStyle(.stonegrey)
                 }
 
                 if result.ocrApplied, let confidence = result.ocrConfidence {
-                    HStack {
-                        Text("OCR Confidence:")
+                    HStack(spacing: 4) {
+                        Text("ocr")
+                            .foregroundStyle(.stonegrey)
                         Text("\(Int(confidence * 100))%")
-                            .foregroundStyle(confidence > 0.8 ? .green : .orange)
+                            .foregroundStyle(
+                                confidence > 0.8
+                                    ? (colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                                    : .orange
+                            )
                     }
                 }
             }
-            .font(.caption)
+            .font(SumiTypography.monoSmall)
 
+            // Warnings
             if !result.warnings.isEmpty {
-                Divider()
-
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Warnings")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.orange)
-
-                    ForEach(result.warnings) { warning in
-                        Label(warning.message, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
+                    ForEach(result.warnings.prefix(3)) { warning in
+                        HStack(spacing: 4) {
+                            Text("!")
+                                .foregroundStyle(.orange)
+                            Text(warning.message)
+                                .foregroundStyle(.stonegrey)
+                                .lineLimit(1)
+                        }
+                        .font(SumiTypography.monoSmall)
                     }
                 }
             }
 
-            HStack {
-                Button("Show in Finder") {
+            // Actions
+            HStack(spacing: 12) {
+                Button(action: {
                     NSWorkspace.shared.selectFile(result.outputURL.path, inFileViewerRootedAtPath: "")
+                }) {
+                    Text("[reveal]")
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
+                .foregroundStyle(.stonegrey)
 
-                Spacer()
-
-                Button("Open") {
+                Button(action: {
                     NSWorkspace.shared.open(result.outputURL)
+                }) {
+                    Text("[open]")
                 }
-                .buttonStyle(.link)
+                .buttonStyle(.plain)
+                .foregroundStyle(.stonegrey)
+
+                Button(action: {
+                    appState.showPreview = true
+                }) {
+                    Text("[preview]")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
             }
-            .font(.caption)
+            .font(SumiTypography.monoSmall)
         }
-        .padding()
-        .background(Color.green.opacity(0.1))
-        .cornerRadius(8)
+        .padding(12)
+        .background(
+            (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                .opacity(0.05)
+        )
+        .cornerRadius(4)
     }
 }
 
@@ -325,4 +460,5 @@ struct ConversionResultCard: View {
     ConversionOptionsView()
         .environmentObject(AppState())
         .frame(width: 350, height: 600)
+        .background(Color.paperBackground)
 }
