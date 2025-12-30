@@ -110,6 +110,7 @@ class QuickActionHandler {
             let service = CompressionService()
             _ = try await service.compress(
                 pdfURL: fileURL,
+                targetRatio: 0.5,
                 options: CompressionOptions(),
                 progressHandler: { _ in }
             )
