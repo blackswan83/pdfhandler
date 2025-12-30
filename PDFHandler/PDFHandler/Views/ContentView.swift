@@ -226,7 +226,9 @@ struct SumiSidebarView: View {
                         }
                         .tag(index)
                         .onTapGesture {
-                            appState.currentPDFIndex = index
+                            Task { @MainActor in
+                                appState.currentPDFIndex = index
+                            }
                         }
                     }
                 } header: {

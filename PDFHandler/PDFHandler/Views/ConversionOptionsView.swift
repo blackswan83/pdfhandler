@@ -88,7 +88,12 @@ struct ConversionOptionsView: View {
                             .buttonStyle(.plain)
                         }
                     }
+                    .background(colorScheme == .dark ? Color.charcoal : Color.ashGrey.opacity(0.3))
+                    .cornerRadius(4)
                 }
+                .padding(16)
+                .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
+                .cornerRadius(4)
             }
 
             // Advanced Options

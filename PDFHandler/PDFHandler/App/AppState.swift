@@ -61,11 +61,13 @@ class AppState: ObservableObject {
     // MARK: - Actions
 
     func loadPDFs(from urls: [URL]) {
-        selectedPDFURLs = urls
-        selectedPDFs = urls.compactMap { url in
-            PDFDocument(url: url)
+        Task { @MainActor in
+            selectedPDFURLs = urls
+            selectedPDFs = urls.compactMap { url in
+                PDFDocument(url: url)
+            }
+            currentPDFIndex = 0
         }
-        currentPDFIndex = 0
     }
 
     func convertCurrentPDF() {
