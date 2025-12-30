@@ -90,8 +90,8 @@ actor CompressionService {
 
         // Create output path
         let outputDirectory = effectiveOptions.outputDirectory ?? pdfURL.deletingLastPathComponent()
-        let baseName = pdfURL.deletingPathExtension().lastPathComponent
-        let outputURL = outputDirectory.appendingPathComponent("\(baseName)_compressed.pdf")
+        let baseName = effectiveOptions.customOutputName ?? "\(pdfURL.deletingPathExtension().lastPathComponent)_compressed"
+        let outputURL = outputDirectory.appendingPathComponent("\(baseName).pdf")
 
         progressHandler(0.2)
 
@@ -238,16 +238,45 @@ actor CompressionService {
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
-            // Track progress by monitoring output
-            var progressReported = 0.0
+            // Track progress by monitoring output and parsing page numbers
+            var lastProgress = 0.0
+            var pagesProcessed = 0
 
+            // Ghostscript outputs "Page X" to stderr when processing
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if !data.isEmpty, let output = String(data: data, encoding: .utf8) {
+                    // Parse "Page X" patterns from Ghostscript output
+                    let pagePattern = /Page\s+(\d+)/
+                    if let match = output.firstMatch(of: pagePattern),
+                       let pageNum = Int(match.1) {
+                        pagesProcessed = max(pagesProcessed, pageNum)
+                        // Estimate progress (assume ~50 pages max, adjust dynamically)
+                        let estimatedProgress = min(Double(pagesProcessed) / 50.0, 0.95)
+                        if estimatedProgress > lastProgress {
+                            lastProgress = estimatedProgress
+                            DispatchQueue.main.async {
+                                progressHandler(lastProgress)
+                            }
+                        }
+                    } else {
+                        // Fallback: increment progress slightly for any activity
+                        lastProgress = min(lastProgress + 0.05, 0.95)
+                        DispatchQueue.main.async {
+                            progressHandler(lastProgress)
+                        }
+                    }
+                }
+            }
+
+            // Also monitor stdout for any progress indicators
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                if !data.isEmpty {
-                    // Ghostscript outputs progress information
-                    // This is a simplified progress estimation
-                    progressReported = min(progressReported + 0.1, 0.95)
-                    progressHandler(progressReported)
+                if !data.isEmpty && lastProgress < 0.9 {
+                    lastProgress = min(lastProgress + 0.02, 0.9)
+                    DispatchQueue.main.async {
+                        progressHandler(lastProgress)
+                    }
                 }
             }
 
@@ -255,13 +284,15 @@ actor CompressionService {
                 outputPipe.fileHandleForReading.readabilityHandler = nil
                 errorPipe.fileHandleForReading.readabilityHandler = nil
 
-                if process.terminationStatus == 0 {
-                    progressHandler(1.0)
-                    continuation.resume()
-                } else {
-                    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                    let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                    continuation.resume(throwing: CompressionError.ghostscriptFailed(errorMessage))
+                DispatchQueue.main.async {
+                    if process.terminationStatus == 0 {
+                        progressHandler(1.0)
+                        continuation.resume()
+                    } else {
+                        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                        let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
+                        continuation.resume(throwing: CompressionError.ghostscriptFailed(errorMessage))
+                    }
                 }
             }
 

@@ -35,36 +35,14 @@ struct ContentView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                // Minimal text buttons
+            ToolbarItem(placement: .primaryAction) {
                 Button(action: { appState.showFilePicker = true }) {
-                    Text("open")
+                    Text("[open]")
                         .font(SumiTypography.mono)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(colorScheme == .dark ? .white : Color.stonegrey)
                 .keyboardShortcut("o", modifiers: .command)
-
-                if !appState.selectedPDFs.isEmpty {
-                    Text("·")
-                        .foregroundStyle(Color.stonegrey)
-
-                    Button(action: { appState.convertCurrentPDF() }) {
-                        Text("convert")
-                            .font(SumiTypography.mono)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                    .disabled(appState.isConverting)
-
-                    Button(action: { appState.compressCurrentPDF() }) {
-                        Text("compress")
-                            .font(SumiTypography.mono)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(colorScheme == .dark ? .white : Color.stonegrey)
-                    .disabled(appState.isCompressing)
-                }
             }
         }
         .fileImporter(
@@ -194,7 +172,7 @@ struct SumiSidebarView: View {
         List(selection: $appState.selectedTab) {
             Section {
                 ForEach(AppTab.allCases, id: \.self) { tab in
-                    HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(commandForTab(tab))
                             .font(SumiTypography.mono)
                             .foregroundStyle(
@@ -202,7 +180,12 @@ struct SumiSidebarView: View {
                                     ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                                     : (colorScheme == .dark ? .white : Color.inkBlack)
                             )
+                        Text(descriptionForTab(tab))
+                            .font(SumiTypography.monoSmall)
+                            .foregroundStyle(Color.stonegrey)
+                            .lineLimit(2)
                     }
+                    .padding(.vertical, 4)
                     .tag(tab)
                 }
             } header: {
@@ -273,6 +256,14 @@ struct SumiSidebarView: View {
         case .convert: return "./convert"
         case .compress: return "./compress"
         case .batch: return "./batch"
+        }
+    }
+
+    private func descriptionForTab(_ tab: AppTab) -> String {
+        switch tab {
+        case .convert: return "PDF → Markdown with images"
+        case .compress: return "Reduce file size with Ghostscript"
+        case .batch: return "Process multiple files at once"
         }
     }
 }

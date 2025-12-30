@@ -8,6 +8,8 @@
 import SwiftUI
 import Combine
 import PDFKit
+import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 class AppState: ObservableObject {
@@ -70,10 +72,55 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Show save panel and return selected URL
+    private func showSavePanel(
+        suggestedName: String,
+        allowedTypes: [String],
+        title: String
+    ) async -> URL? {
+        await withCheckedContinuation { continuation in
+            let panel = NSSavePanel()
+            panel.title = title
+            panel.nameFieldStringValue = suggestedName
+            panel.canCreateDirectories = true
+
+            var contentTypes: [UTType] = []
+            for ext in allowedTypes {
+                if ext == "md" {
+                    if let mdType = UTType(filenameExtension: "md") {
+                        contentTypes.append(mdType)
+                    }
+                } else if ext == "pdf" {
+                    contentTypes.append(.pdf)
+                }
+            }
+            panel.allowedContentTypes = contentTypes
+
+            panel.begin { response in
+                if response == .OK {
+                    continuation.resume(returning: panel.url)
+                } else {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
     func convertCurrentPDF() {
         guard let pdf = currentPDF, let url = currentPDFURL else { return }
 
+        let baseName = url.deletingPathExtension().lastPathComponent
+
         Task {
+            // Show save dialog
+            guard let outputURL = await showSavePanel(
+                suggestedName: "\(baseName).md",
+                allowedTypes: ["md"],
+                title: "Save Markdown As"
+            ) else {
+                return // User cancelled
+            }
+
             isConverting = true
             conversionProgress = 0
 
@@ -84,7 +131,8 @@ class AppState: ObservableObject {
                     options: ConversionOptions(
                         includeYAMLFrontmatter: includeYAMLFrontmatter,
                         imageOutputFormat: ImageFormat(rawValue: imageOutputFormat) ?? .png,
-                        outputDirectory: outputDirectory.isEmpty ? nil : URL(fileURLWithPath: outputDirectory)
+                        outputDirectory: outputURL.deletingLastPathComponent(),
+                        customOutputName: outputURL.deletingPathExtension().lastPathComponent
                     ),
                     progressHandler: { [weak self] progress in
                         Task { @MainActor in
@@ -107,14 +155,33 @@ class AppState: ObservableObject {
     func compressCurrentPDF() {
         guard let url = currentPDFURL else { return }
 
+        let baseName = url.deletingPathExtension().lastPathComponent
+
         Task {
+            // Show save dialog
+            guard let outputURL = await showSavePanel(
+                suggestedName: "\(baseName)_compressed.pdf",
+                allowedTypes: ["pdf"],
+                title: "Save Compressed PDF As"
+            ) else {
+                return // User cancelled
+            }
+
             isCompressing = true
             compressionProgress = 0
 
             do {
+                let options = CompressionOptions(
+                    preset: GhostscriptPreset.forRatio(targetCompressionRatio),
+                    targetRatio: targetCompressionRatio,
+                    outputDirectory: outputURL.deletingLastPathComponent(),
+                    customOutputName: outputURL.deletingPathExtension().lastPathComponent
+                )
+
                 let result = try await compressionService.compress(
                     pdfURL: url,
                     targetRatio: targetCompressionRatio,
+                    options: options,
                     progressHandler: { [weak self] progress in
                         Task { @MainActor in
                             self?.compressionProgress = progress

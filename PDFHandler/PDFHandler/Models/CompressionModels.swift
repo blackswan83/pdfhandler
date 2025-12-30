@@ -18,6 +18,7 @@ struct CompressionOptions {
     var fontHandling: FontHandling = .subset
     var preserveMetadata: Bool = true
     var outputDirectory: URL?
+    var customOutputName: String?
 }
 
 enum GhostscriptPreset: String, CaseIterable, Identifiable {
