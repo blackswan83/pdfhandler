@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import PDFKit
 
 struct CompressionOptionsView: View {
     @EnvironmentObject var appState: AppState

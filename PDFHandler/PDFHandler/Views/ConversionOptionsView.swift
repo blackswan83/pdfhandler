@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import PDFKit
 
 struct ConversionOptionsView: View {
     @EnvironmentObject var appState: AppState
