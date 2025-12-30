@@ -3,6 +3,7 @@
 //  PDFHandler
 //
 //  Batch processing for multiple PDFs
+//  Design: CLI precision meets calligraphic craft
 //
 
 import SwiftUI
@@ -11,6 +12,7 @@ import PDFKit
 
 struct BatchProcessingView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.colorScheme) var colorScheme
     @State private var batchMode: BatchMode = .convert
     @State private var selectedFiles: [URL] = []
     @State private var processingStatus: [URL: ProcessingStatus] = [:]
@@ -18,8 +20,8 @@ struct BatchProcessingView: View {
     @State private var overallProgress: Double = 0
 
     enum BatchMode: String, CaseIterable {
-        case convert = "Convert to Markdown"
-        case compress = "Compress PDFs"
+        case convert = "convert"
+        case compress = "compress"
     }
 
     enum ProcessingStatus {
@@ -30,120 +32,189 @@ struct BatchProcessingView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             // Header
-            Text("Batch Processing")
-                .font(.title2)
-                .fontWeight(.semibold)
+            Text("./batch")
+                .font(SumiTypography.monoTitle)
+                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
 
             // Mode Selection
-            Picker("Operation", selection: $batchMode) {
+            HStack(spacing: 0) {
                 ForEach(BatchMode.allCases, id: \.self) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    Button(action: { batchMode = mode }) {
+                        Text(mode.rawValue)
+                            .font(SumiTypography.mono)
+                            .foregroundStyle(
+                                batchMode == mode
+                                    ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                                    : Color.stonegrey
+                            )
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                batchMode == mode
+                                    ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen).opacity(0.1)
+                                    : Color.clear
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .pickerStyle(.segmented)
+            .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
+            .cornerRadius(4)
 
             // File List
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Files")
-                        .font(.headline)
+                    Text("--files")
+                        .font(SumiTypography.monoSmall)
+                        .foregroundStyle(Color.stonegrey)
 
                     Spacer()
 
                     Button(action: addFiles) {
-                        Label("Add Files", systemImage: "plus")
+                        Text("[+ add]")
+                            .font(SumiTypography.monoSmall)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
                     if !selectedFiles.isEmpty {
                         Button(action: clearFiles) {
-                            Label("Clear", systemImage: "trash")
+                            Text("[clear]")
+                                .font(SumiTypography.monoSmall)
                         }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.red)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.stonegrey)
                     }
                 }
 
                 if selectedFiles.isEmpty {
+                    // Empty state - Sumi style
                     VStack(spacing: 12) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 40))
-                            .foregroundStyle(.secondary)
-                        Text("No Files Selected")
-                            .font(.headline)
-                        Text("Add PDF files to process in batch")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Button("Select Files", action: addFiles)
-                            .buttonStyle(.borderedProminent)
+                        Text("_")
+                            .font(SumiTypography.commandLarge)
+                            .foregroundStyle(Color.stonegrey.opacity(0.5))
+
+                        Text("no files selected")
+                            .font(SumiTypography.mono)
+                            .foregroundStyle(Color.stonegrey)
+
+                        Button(action: addFiles) {
+                            Text("[select files]")
+                                .font(SumiTypography.mono)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: 200)
+                    .frame(height: 150)
+                    .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
+                    .cornerRadius(4)
                 } else {
-                    List {
+                    // File list
+                    VStack(spacing: 0) {
                         ForEach(selectedFiles, id: \.self) { url in
-                            BatchFileRow(
+                            SumiBatchFileRow(
                                 url: url,
-                                status: processingStatus[url] ?? .pending
+                                status: processingStatus[url] ?? .pending,
+                                colorScheme: colorScheme
                             )
+
+                            if url != selectedFiles.last {
+                                Divider()
+                                    .background(colorScheme == .dark ? Color.sumiGrey : Color.mist)
+                            }
                         }
-                        .onDelete(perform: deleteFiles)
                     }
-                    .listStyle(.bordered)
-                    .frame(height: 200)
+                    .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
+                    .cornerRadius(4)
                 }
             }
 
             // Options
-            if batchMode == .convert {
-                BatchConversionOptions()
-            } else {
-                BatchCompressionOptions(targetRatio: $appState.targetCompressionRatio)
-            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("--options")
+                    .font(SumiTypography.monoSmall)
+                    .foregroundStyle(Color.stonegrey)
 
-            Divider()
-
-            // Progress
-            if isProcessing {
-                VStack(spacing: 8) {
-                    ProgressView(value: overallProgress) {
-                        Text("Processing \(completedCount)/\(selectedFiles.count) files...")
-                    }
-
-                    Text("\(Int(overallProgress * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Button("Cancel") {
-                        cancelProcessing()
-                    }
-                    .buttonStyle(.bordered)
-                }
-            } else {
-                Button(action: startBatchProcessing) {
-                    Label(
-                        batchMode == .convert ? "Convert All" : "Compress All",
-                        systemImage: batchMode == .convert ? "doc.text" : "arrow.down.right.and.arrow.up.left"
+                if batchMode == .convert {
+                    SumiToggleOption(
+                        label: "yaml frontmatter",
+                        isOn: $appState.includeYAMLFrontmatter
                     )
-                    .frame(maxWidth: .infinity)
+                    SumiToggleOption(
+                        label: "extract images",
+                        isOn: .constant(true)
+                    )
+                } else {
+                    SumiSlider(
+                        value: $appState.targetCompressionRatio,
+                        range: 0.1...1.0,
+                        label: "target size"
+                    )
+
+                    HStack {
+                        Text("preset:")
+                            .font(SumiTypography.monoSmall)
+                            .foregroundStyle(Color.stonegrey)
+                        Text(GhostscriptPreset.forRatio(appState.targetCompressionRatio).displayName)
+                            .font(SumiTypography.monoSmall)
+                            .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(selectedFiles.isEmpty)
+            }
+            .padding(16)
+            .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
+            .cornerRadius(4)
+
+            Spacer()
+
+            // Progress or Action
+            if isProcessing {
+                VStack(alignment: .leading, spacing: 8) {
+                    CLIProgressBar(
+                        progress: overallProgress,
+                        label: "processing → \(completedCount)/\(selectedFiles.count) files"
+                    )
+
+                    Button(action: cancelProcessing) {
+                        Text("[cancel]")
+                            .font(SumiTypography.mono)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.stonegrey)
+                }
+            } else {
+                HStack(spacing: 16) {
+                    Button(action: startBatchProcessing) {
+                        Text(batchMode == .convert ? "[convert all]" : "[compress all]")
+                            .font(SumiTypography.mono)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(
+                        selectedFiles.isEmpty
+                            ? Color.stonegrey
+                            : (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                    )
+                    .disabled(selectedFiles.isEmpty)
+
+                    if !selectedFiles.isEmpty {
+                        Text("\(selectedFiles.count) files")
+                            .font(SumiTypography.monoSmall)
+                            .foregroundStyle(Color.stonegrey)
+                    }
+                }
             }
 
             // Summary
             if !processingStatus.isEmpty && !isProcessing {
-                BatchSummaryView(status: processingStatus)
+                SumiBatchSummary(status: processingStatus, colorScheme: colorScheme)
             }
-
-            Spacer()
         }
-        .padding()
+        .padding(20)
+        .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
         .onAppear {
-            // Pre-populate with already loaded PDFs
             if selectedFiles.isEmpty {
                 selectedFiles = appState.selectedPDFURLs
             }
@@ -159,14 +230,19 @@ struct BatchProcessingView: View {
     }
 
     private func addFiles() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.pdf]
+        DispatchQueue.main.async {
+            let panel = NSOpenPanel()
+            panel.allowsMultipleSelection = true
+            panel.canChooseDirectories = false
+            panel.canChooseFiles = true
+            panel.allowedContentTypes = [.pdf]
+            panel.message = "Select PDF files to process"
+            panel.prompt = "Select"
 
-        if panel.runModal() == .OK {
-            let newFiles = panel.urls.filter { !selectedFiles.contains($0) }
-            selectedFiles.append(contentsOf: newFiles)
+            if panel.runModal() == .OK {
+                let newFiles = panel.urls.filter { !selectedFiles.contains($0) }
+                selectedFiles.append(contentsOf: newFiles)
+            }
         }
     }
 
@@ -175,26 +251,19 @@ struct BatchProcessingView: View {
         processingStatus = [:]
     }
 
-    private func deleteFiles(at offsets: IndexSet) {
-        for index in offsets {
-            let url = selectedFiles[index]
-            processingStatus.removeValue(forKey: url)
-        }
-        selectedFiles.remove(atOffsets: offsets)
-    }
-
     private func startBatchProcessing() {
         isProcessing = true
         overallProgress = 0
 
-        // Initialize status
         for url in selectedFiles {
             processingStatus[url] = .pending
         }
 
         Task {
             for (index, url) in selectedFiles.enumerated() {
-                processingStatus[url] = .processing
+                await MainActor.run {
+                    processingStatus[url] = .processing
+                }
 
                 do {
                     if batchMode == .convert {
@@ -202,15 +271,23 @@ struct BatchProcessingView: View {
                     } else {
                         try await compressFile(url)
                     }
-                    processingStatus[url] = .completed
+                    await MainActor.run {
+                        processingStatus[url] = .completed
+                    }
                 } catch {
-                    processingStatus[url] = .failed(error.localizedDescription)
+                    await MainActor.run {
+                        processingStatus[url] = .failed(error.localizedDescription)
+                    }
                 }
 
-                overallProgress = Double(index + 1) / Double(selectedFiles.count)
+                await MainActor.run {
+                    overallProgress = Double(index + 1) / Double(selectedFiles.count)
+                }
             }
 
-            isProcessing = false
+            await MainActor.run {
+                isProcessing = false
+            }
         }
     }
 
@@ -244,143 +321,139 @@ struct BatchProcessingView: View {
 
     private func cancelProcessing() {
         isProcessing = false
-        // Note: In a real implementation, you'd want to cancel the current task
     }
 }
 
-// MARK: - Batch File Row
+// MARK: - Sumi Batch File Row
 
-struct BatchFileRow: View {
+struct SumiBatchFileRow: View {
     let url: URL
     let status: BatchProcessingView.ProcessingStatus
+    let colorScheme: ColorScheme
 
     var body: some View {
-        HStack {
-            Image(systemName: "doc.fill")
-                .foregroundStyle(.red)
+        HStack(spacing: 12) {
+            // Status indicator
+            statusIndicator
 
-            VStack(alignment: .leading) {
+            // File info
+            VStack(alignment: .leading, spacing: 2) {
                 Text(url.lastPathComponent)
+                    .font(SumiTypography.mono)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                     .lineLimit(1)
 
                 Text(formattedSize)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(SumiTypography.monoSmall)
+                    .foregroundStyle(Color.stonegrey)
             }
 
             Spacer()
 
-            statusIcon
+            // Status text
+            statusText
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private var formattedSize: String {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = attributes[.size] as? Int64 else {
-            return ""
+            return "--"
         }
         return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 
     @ViewBuilder
-    private var statusIcon: some View {
+    private var statusIndicator: some View {
         switch status {
         case .pending:
-            Image(systemName: "circle")
-                .foregroundStyle(.secondary)
+            Text("○")
+                .font(SumiTypography.mono)
+                .foregroundStyle(Color.stonegrey)
         case .processing:
-            ProgressView()
-                .scaleEffect(0.7)
+            Text("◐")
+                .font(SumiTypography.mono)
+                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
         case .completed:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+            Text("✓")
+                .font(SumiTypography.mono)
+                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+        case .failed:
+            Text("×")
+                .font(SumiTypography.mono)
+                .foregroundStyle(.orange)
+        }
+    }
+
+    @ViewBuilder
+    private var statusText: some View {
+        switch status {
+        case .pending:
+            Text("pending")
+                .font(SumiTypography.monoSmall)
+                .foregroundStyle(Color.stonegrey)
+        case .processing:
+            Text("processing...")
+                .font(SumiTypography.monoSmall)
+                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+        case .completed:
+            Text("done")
+                .font(SumiTypography.monoSmall)
+                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
         case .failed(let message):
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
+            Text("failed")
+                .font(SumiTypography.monoSmall)
+                .foregroundStyle(.orange)
                 .help(message)
         }
     }
 }
 
-// MARK: - Batch Conversion Options
+// MARK: - Sumi Batch Summary
 
-struct BatchConversionOptions: View {
-    @EnvironmentObject var appState: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Conversion Options")
-                .font(.headline)
-
-            Toggle("Include YAML Frontmatter", isOn: $appState.includeYAMLFrontmatter)
-            Toggle("Extract Images", isOn: .constant(true))
-        }
-        .padding()
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
-    }
-}
-
-// MARK: - Batch Compression Options
-
-struct BatchCompressionOptions: View {
-    @Binding var targetRatio: Double
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Compression Options")
-                .font(.headline)
-
-            HStack {
-                Text("Target Size:")
-                Slider(value: $targetRatio, in: 0.1...1.0)
-                Text("\(Int(targetRatio * 100))%")
-                    .frame(width: 40)
-            }
-
-            Text("Preset: \(GhostscriptPreset.forRatio(targetRatio).displayName)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
-    }
-}
-
-// MARK: - Batch Summary View
-
-struct BatchSummaryView: View {
+struct SumiBatchSummary: View {
     let status: [URL: BatchProcessingView.ProcessingStatus]
+    let colorScheme: ColorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Summary")
-                .font(.headline)
-
-            HStack(spacing: 20) {
-                StatView(
-                    value: completedCount,
-                    label: "Completed",
-                    color: .green
-                )
-
-                StatView(
-                    value: failedCount,
-                    label: "Failed",
-                    color: .red
-                )
-
-                StatView(
-                    value: status.count,
-                    label: "Total",
-                    color: .blue
-                )
+        HStack(spacing: 24) {
+            // Completed
+            HStack(spacing: 4) {
+                Text("✓")
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                Text("\(completedCount)")
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
+                Text("done")
+                    .foregroundStyle(Color.stonegrey)
             }
+
+            // Failed
+            if failedCount > 0 {
+                HStack(spacing: 4) {
+                    Text("×")
+                        .foregroundStyle(.orange)
+                    Text("\(failedCount)")
+                        .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
+                    Text("failed")
+                        .foregroundStyle(Color.stonegrey)
+                }
+            }
+
+            Spacer()
+
+            // Total
+            Text("\(status.count) total")
+                .foregroundStyle(Color.stonegrey)
         }
-        .padding()
-        .background(Color(nsColor: .controlBackgroundColor))
-        .cornerRadius(8)
+        .font(SumiTypography.mono)
+        .padding(12)
+        .background(
+            (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                .opacity(0.05)
+        )
+        .cornerRadius(4)
     }
 
     private var completedCount: Int {
@@ -398,27 +471,9 @@ struct BatchSummaryView: View {
     }
 }
 
-struct StatView: View {
-    let value: Int
-    let label: String
-    let color: Color
-
-    var body: some View {
-        VStack {
-            Text("\(value)")
-                .font(.title2)
-                .fontWeight(.semibold)
-                .foregroundStyle(color)
-
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
 #Preview {
     BatchProcessingView()
         .environmentObject(AppState())
         .frame(width: 350, height: 600)
+        .background(Color.paperBackground)
 }
