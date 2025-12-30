@@ -42,19 +42,19 @@ struct ContentView: View {
                         .font(SumiTypography.mono)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(colorScheme == .dark ? .white : .stonegrey)
+                .foregroundStyle(colorScheme == .dark ? .white : Color.stonegrey)
                 .keyboardShortcut("o", modifiers: .command)
 
                 if !appState.selectedPDFs.isEmpty {
                     Text("·")
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
 
                     Button(action: { appState.convertCurrentPDF() }) {
                         Text("convert")
                             .font(SumiTypography.mono)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                     .disabled(appState.isConverting)
 
                     Button(action: { appState.compressCurrentPDF() }) {
@@ -62,7 +62,7 @@ struct ContentView: View {
                             .font(SumiTypography.mono)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(colorScheme == .dark ? .white : .stonegrey)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.stonegrey)
                     .disabled(appState.isCompressing)
                 }
             }
@@ -152,13 +152,13 @@ struct SumiDropZoneView: View {
                 HStack(spacing: 4) {
                     Text("drop")
                         .font(SumiTypography.command)
-                        .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                        .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
 
                     Text(".pdf")
                         .font(SumiTypography.command)
-                        .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                        .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
-                    CursorBlinkView(color: colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    CursorBlinkView(color: colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                         .opacity(isDragging ? 0 : 1)
                 }
 
@@ -200,7 +200,7 @@ struct SumiSidebarView: View {
                             .foregroundStyle(
                                 appState.selectedTab == tab
                                     ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                                    : (colorScheme == .dark ? .white : .inkBlack)
+                                    : (colorScheme == .dark ? .white : Color.inkBlack)
                             )
                     }
                     .tag(tab)
@@ -208,7 +208,7 @@ struct SumiSidebarView: View {
             } header: {
                 Text("commands")
                     .font(SumiTypography.monoSmall)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
             }
 
             if !appState.selectedPDFURLs.isEmpty {
@@ -217,7 +217,7 @@ struct SumiSidebarView: View {
                         HStack(spacing: 8) {
                             Text("→")
                                 .font(SumiTypography.mono)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
 
                             Text(url.lastPathComponent)
                                 .font(SumiTypography.mono)
@@ -232,7 +232,7 @@ struct SumiSidebarView: View {
                 } header: {
                     Text("open")
                         .font(SumiTypography.monoSmall)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
                 }
             }
 
@@ -242,7 +242,7 @@ struct SumiSidebarView: View {
                         HStack(spacing: 8) {
                             Text("✓")
                                 .font(SumiTypography.mono)
-                                .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(result.outputURL.lastPathComponent)
@@ -251,14 +251,14 @@ struct SumiSidebarView: View {
 
                                 Text("\(result.processingTime, specifier: "%.1f")s")
                                     .font(SumiTypography.monoSmall)
-                                    .foregroundStyle(.stonegrey)
+                                    .foregroundStyle(Color.stonegrey)
                             }
                         }
                     }
                 } header: {
                     Text("history")
                         .font(SumiTypography.monoSmall)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
                 }
             }
         }
@@ -320,7 +320,7 @@ struct SumiPDFPreviewView: View {
                 if let url = appState.currentPDFURL {
                     Text(url.lastPathComponent)
                         .font(SumiTypography.mono)
-                        .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                        .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                         .lineLimit(1)
 
                     Spacer()
@@ -328,14 +328,14 @@ struct SumiPDFPreviewView: View {
                     if let pdf = appState.currentPDF {
                         Text("\(pdf.pageCount)p")
                             .font(SumiTypography.monoSmall)
-                            .foregroundStyle(.stonegrey)
+                            .foregroundStyle(Color.stonegrey)
 
                         if let size = fileSize(for: url) {
                             Text("·")
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                             Text(size)
                                 .font(SumiTypography.monoSmall)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                         }
                     }
                 }
@@ -355,7 +355,7 @@ struct SumiPDFPreviewView: View {
                 VStack {
                     Text("no file")
                         .font(SumiTypography.mono)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -404,7 +404,7 @@ struct SumiMarkdownPreviewSheet: View {
             HStack {
                 Text("output.md")
                     .font(SumiTypography.mono)
-                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
 
                 Spacer()
 
@@ -431,7 +431,7 @@ struct SumiMarkdownPreviewSheet: View {
             ScrollView {
                 Text(appState.previewMarkdown)
                     .font(SumiTypography.mono)
-                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()

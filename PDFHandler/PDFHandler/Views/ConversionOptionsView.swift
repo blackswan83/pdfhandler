@@ -21,7 +21,7 @@ struct ConversionOptionsView: View {
             // Header
             Text("./convert")
                 .font(SumiTypography.monoTitle)
-                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
 
             // Document Info
             if let pdf = appState.currentPDF, let url = appState.currentPDFURL {
@@ -32,7 +32,7 @@ struct ConversionOptionsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("--flags")
                     .font(SumiTypography.monoSmall)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
 
                 SumiToggleOption(
                     label: "yaml frontmatter",
@@ -63,7 +63,7 @@ struct ConversionOptionsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("--image-format")
                         .font(SumiTypography.monoSmall)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
 
                     HStack(spacing: 0) {
                         ForEach(ImageFormat.allCases) { format in
@@ -75,7 +75,7 @@ struct ConversionOptionsView: View {
                                     .foregroundStyle(
                                         conversionOptions.imageOutputFormat == format
                                             ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                                            : .stonegrey
+                                            : Color.stonegrey
                                     )
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 8)
@@ -100,7 +100,7 @@ struct ConversionOptionsView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("table fallback")
                                 .font(SumiTypography.monoSmall)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
 
                             HStack(spacing: 0) {
                                 ForEach(TableFallbackMode.allCases) { mode in
@@ -112,7 +112,7 @@ struct ConversionOptionsView: View {
                                             .foregroundStyle(
                                                 conversionOptions.tableFallbackMode == mode
                                                     ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                                                    : .stonegrey
+                                                    : Color.stonegrey
                                             )
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 6)
@@ -132,7 +132,7 @@ struct ConversionOptionsView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("ocr languages")
                                     .font(SumiTypography.monoSmall)
-                                    .foregroundStyle(.stonegrey)
+                                    .foregroundStyle(Color.stonegrey)
 
                                 TextField(
                                     "en-US",
@@ -158,7 +158,7 @@ struct ConversionOptionsView: View {
                 label: {
                     Text("--advanced")
                         .font(SumiTypography.monoSmall)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
                 }
             )
 
@@ -182,7 +182,7 @@ struct ConversionOptionsView: View {
                             .font(SumiTypography.mono)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                     .disabled(appState.currentPDF == nil)
 
                     Button(action: {
@@ -192,7 +192,7 @@ struct ConversionOptionsView: View {
                             .font(SumiTypography.mono)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
                 }
             }
 
@@ -238,7 +238,7 @@ struct SumiDocumentInfo: View {
             HStack {
                 Text(url.lastPathComponent)
                     .font(SumiTypography.mono)
-                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                     .lineLimit(1)
                     .truncationMode(.middle)
 
@@ -246,14 +246,14 @@ struct SumiDocumentInfo: View {
 
                 Text("\(pdf.pageCount)p")
                     .font(SumiTypography.monoSmall)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
 
                 Text("·")
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
 
                 Text(formattedFileSize)
                     .font(SumiTypography.monoSmall)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
             }
 
             // Metadata indicators
@@ -262,25 +262,25 @@ struct SumiDocumentInfo: View {
                     if metadata.hasText {
                         HStack(spacing: 4) {
                             Text("✓")
-                                .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                             Text("text")
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                         }
                     } else {
                         HStack(spacing: 4) {
                             Text("×")
                                 .foregroundStyle(.orange)
                             Text("no text")
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                         }
                     }
 
                     if metadata.isScanned {
                         HStack(spacing: 4) {
                             Text("◎")
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                             Text("scanned")
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                         }
                     }
                 }
@@ -323,12 +323,12 @@ struct SumiToggleOption: View {
                 .foregroundStyle(
                     isOn
                         ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                        : .stonegrey
+                        : Color.stonegrey
                 )
 
             Text(label)
                 .font(SumiTypography.monoSmall)
-                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
 
             Spacer()
         }
@@ -352,13 +352,13 @@ struct SumiConversionResult: View {
             // Success line
             HStack(spacing: 4) {
                 Text("✓")
-                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
                 Text("done")
-                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
                 Text("in \(String(format: "%.1f", result.processingTime))s")
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
 
                 Rectangle()
                     .fill(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
@@ -375,10 +375,10 @@ struct SumiConversionResult: View {
             // Output info
             HStack(spacing: 8) {
                 Text("→")
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
 
                 Text(result.outputURL.lastPathComponent)
-                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
             }
             .font(SumiTypography.monoSmall)
 
@@ -386,17 +386,17 @@ struct SumiConversionResult: View {
             HStack(spacing: 16) {
                 if !result.extractedImages.isEmpty {
                     Text("\(result.extractedImages.count) images")
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
                 }
 
                 if result.ocrApplied, let confidence = result.ocrConfidence {
                     HStack(spacing: 4) {
                         Text("ocr")
-                            .foregroundStyle(.stonegrey)
+                            .foregroundStyle(Color.stonegrey)
                         Text("\(Int(confidence * 100))%")
                             .foregroundStyle(
                                 confidence > 0.8
-                                    ? (colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                                    ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                                     : .orange
                             )
                     }
@@ -412,7 +412,7 @@ struct SumiConversionResult: View {
                             Text("!")
                                 .foregroundStyle(.orange)
                             Text(warning.message)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                                 .lineLimit(1)
                         }
                         .font(SumiTypography.monoSmall)
@@ -428,7 +428,7 @@ struct SumiConversionResult: View {
                     Text("[reveal]")
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.stonegrey)
+                .foregroundStyle(Color.stonegrey)
 
                 Button(action: {
                     NSWorkspace.shared.open(result.outputURL)
@@ -436,7 +436,7 @@ struct SumiConversionResult: View {
                     Text("[open]")
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.stonegrey)
+                .foregroundStyle(Color.stonegrey)
 
                 Button(action: {
                     appState.showPreview = true
@@ -444,7 +444,7 @@ struct SumiConversionResult: View {
                     Text("[preview]")
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
             }
             .font(SumiTypography.monoSmall)
         }
