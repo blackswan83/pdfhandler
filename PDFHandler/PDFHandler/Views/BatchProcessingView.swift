@@ -7,6 +7,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import PDFKit
 
 struct BatchProcessingView: View {
     @EnvironmentObject var appState: AppState
@@ -66,14 +67,19 @@ struct BatchProcessingView: View {
                 }
 
                 if selectedFiles.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Files Selected", systemImage: "doc.on.doc")
-                    } description: {
+                    VStack(spacing: 12) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.secondary)
+                        Text("No Files Selected")
+                            .font(.headline)
                         Text("Add PDF files to process in batch")
-                    } actions: {
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                         Button("Select Files", action: addFiles)
                             .buttonStyle(.borderedProminent)
                     }
+                    .frame(maxWidth: .infinity)
                     .frame(height: 200)
                 } else {
                     List {
