@@ -411,7 +411,7 @@ struct InkDissolveModifier: ViewModifier {
                 }
             }
         }
-        .onChange(of: isActive) { _, active in
+        .onChange(of: isActive) { active in
             if active {
                 createParticles()
                 animateParticles()

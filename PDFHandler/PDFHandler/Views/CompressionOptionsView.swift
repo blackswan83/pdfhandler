@@ -86,7 +86,7 @@ struct CompressionOptionsView: View {
                     range: 0.1...1.0,
                     label: "compression"
                 )
-                .onChange(of: appState.targetCompressionRatio) { _, newValue in
+                .onChange(of: appState.targetCompressionRatio) { newValue in
                     updatePreview()
                     compressionOptions.preset = GhostscriptPreset.forRatio(newValue)
                 }
@@ -235,7 +235,7 @@ struct CompressionOptionsView: View {
             await checkGhostscript()
             updatePreview()
         }
-        .onChange(of: appState.compressionResults.count) { _, _ in
+        .onChange(of: appState.compressionResults.count) { _ in
             showCompletionAnimation = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 showCompletionAnimation = false

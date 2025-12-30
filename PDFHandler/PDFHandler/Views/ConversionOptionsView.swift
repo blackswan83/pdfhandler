@@ -201,7 +201,7 @@ struct ConversionOptionsView: View {
                 SumiConversionResult(result: lastResult)
             }
         }
-        .onChange(of: appState.conversionResults.count) { _, _ in
+        .onChange(of: appState.conversionResults.count) { _ in
             showCompletionAnimation = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 showCompletionAnimation = false
