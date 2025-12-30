@@ -80,86 +80,47 @@ class ServiceProvider: NSObject {
     }
 }
 
-// MARK: - Quick Actions (Shortcuts.app integration)
+// MARK: - Quick Actions Support
+// Note: Full Shortcuts.app integration requires an Intents extension target
+// This provides the foundation for future Shortcuts integration
 
-import Intents
-
-@available(macOS 12.0, *)
-class ConvertPDFIntent: INIntent {
-    @NSManaged var inputFile: INFile?
+enum QuickActionType: String {
+    case convert = "com.pdfhandler.convert"
+    case compress = "com.pdfhandler.compress"
 }
 
-@available(macOS 12.0, *)
-class ConvertPDFIntentHandler: NSObject, ConvertPDFIntentHandling {
-    func handle(intent: ConvertPDFIntent, completion: @escaping (ConvertPDFIntentResponse) -> Void) {
-        guard let inputFile = intent.inputFile,
-              let data = inputFile.data else {
-            completion(ConvertPDFIntentResponse(code: .failure, userActivity: nil))
-            return
+class QuickActionHandler {
+    static let shared = QuickActionHandler()
+
+    func handleAction(_ type: QuickActionType, fileURL: URL) async throws {
+        guard let pdf = PDFDocument(url: fileURL) else {
+            throw QuickActionError.invalidPDF
         }
 
-        Task {
-            do {
-                // Create temp file
-                let tempURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString)
-                    .appendingPathExtension("pdf")
-
-                try data.write(to: tempURL)
-
-                // Convert
-                guard let pdf = PDFDocument(url: tempURL) else {
-                    completion(ConvertPDFIntentResponse(code: .failure, userActivity: nil))
-                    return
-                }
-
-                let converter = MarkdownConverter()
-                let result = try await converter.convert(
-                    pdf: pdf,
-                    sourceURL: tempURL,
-                    options: ConversionOptions(),
-                    progressHandler: { _ in }
-                )
-
-                // Read output
-                let outputData = try Data(contentsOf: result.outputURL)
-                let outputFile = INFile(
-                    data: outputData,
-                    filename: result.outputURL.lastPathComponent,
-                    typeIdentifier: "public.plain-text"
-                )
-
-                let response = ConvertPDFIntentResponse(code: .success, userActivity: nil)
-                response.outputFile = outputFile
-                completion(response)
-
-                // Cleanup
-                try? FileManager.default.removeItem(at: tempURL)
-
-            } catch {
-                completion(ConvertPDFIntentResponse(code: .failure, userActivity: nil))
-            }
-        }
-    }
-
-    func resolveInputFile(for intent: ConvertPDFIntent, with completion: @escaping (INFileResolutionResult) -> Void) {
-        if let file = intent.inputFile {
-            completion(.success(with: file))
-        } else {
-            completion(.needsValue())
+        switch type {
+        case .convert:
+            let converter = MarkdownConverter()
+            _ = try await converter.convert(
+                pdf: pdf,
+                sourceURL: fileURL,
+                options: ConversionOptions(),
+                progressHandler: { _ in }
+            )
+        case .compress:
+            let service = CompressionService()
+            _ = try await service.compress(
+                pdfURL: fileURL,
+                options: CompressionOptions(),
+                progressHandler: { _ in }
+            )
         }
     }
 }
 
-@available(macOS 12.0, *)
-class ConvertPDFIntentResponse: INIntentResponse {
-    @NSManaged var outputFile: INFile?
-}
-
-@available(macOS 12.0, *)
-protocol ConvertPDFIntentHandling {
-    func handle(intent: ConvertPDFIntent, completion: @escaping (ConvertPDFIntentResponse) -> Void)
-    func resolveInputFile(for intent: ConvertPDFIntent, with completion: @escaping (INFileResolutionResult) -> Void)
+enum QuickActionError: Error {
+    case invalidPDF
+    case conversionFailed
+    case compressionFailed
 }
 
 // MARK: - Drag and Drop Extension
