@@ -15,9 +15,11 @@ actor CompressionService {
     private var ghostscriptPath: String? {
         // Check common installation paths
         let paths = [
-            "/usr/local/bin/gs",
-            "/opt/homebrew/bin/gs",
-            "/usr/bin/gs",
+            "/opt/homebrew/bin/gs",           // Apple Silicon Homebrew
+            "/usr/local/bin/gs",              // Intel Homebrew
+            "/usr/bin/gs",                    // System path
+            "/opt/local/bin/gs",              // MacPorts
+            "/sw/bin/gs",                     // Fink
             Bundle.main.path(forResource: "gs", ofType: nil)
         ]
 
@@ -25,6 +27,37 @@ actor CompressionService {
             if let p = path, FileManager.default.fileExists(atPath: p) {
                 return p
             }
+        }
+
+        // Try to find gs using which command (for non-sandboxed apps)
+        if let whichPath = findGhostscriptWithWhich() {
+            return whichPath
+        }
+
+        return nil
+    }
+
+    private func findGhostscriptWithWhich() -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        process.arguments = ["gs"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if let path = path, !path.isEmpty, FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        } catch {
+            // Ignore errors - which might not work in sandbox
         }
 
         return nil
