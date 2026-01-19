@@ -253,6 +253,7 @@ struct SumiSidebarView: View {
 
     private func commandForTab(_ tab: AppTab) -> String {
         switch tab {
+        case .quickSign: return "./quick-sign"
         case .convert: return "./convert"
         case .compress: return "./compress"
         case .merge: return "./merge"
@@ -267,12 +268,13 @@ struct SumiSidebarView: View {
 
     private func descriptionForTab(_ tab: AppTab) -> String {
         switch tab {
+        case .quickSign: return "Type to sign (easy)"
         case .convert: return "PDF → Markdown"
         case .compress: return "Reduce file size"
         case .merge: return "Combine PDFs"
         case .split: return "Split into pages"
         case .rotate: return "Rotate pages"
-        case .sign: return "Add signature"
+        case .sign: return "Draw signature"
         case .protect: return "Password protect"
         case .watermark: return "Add watermark"
         case .batch: return "Batch process"
@@ -288,15 +290,18 @@ struct SumiWorkspaceView: View {
 
     var body: some View {
         HSplitView {
-            // PDF Preview (show for most tabs, hide for merge which has its own file list)
-            if appState.selectedTab != .merge {
+            // PDF Preview (show for most tabs, hide for merge/quickSign which have their own layout)
+            if appState.selectedTab != .merge && appState.selectedTab != .quickSign {
                 SumiPDFPreviewView()
                     .frame(minWidth: 400)
             }
 
             // Options Panel
             optionsPanelView
-                .frame(minWidth: 300, maxWidth: appState.selectedTab == .merge ? .infinity : 400)
+                .frame(
+                    minWidth: 300,
+                    maxWidth: (appState.selectedTab == .merge || appState.selectedTab == .quickSign) ? .infinity : 400
+                )
                 .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
         }
     }
@@ -304,6 +309,8 @@ struct SumiWorkspaceView: View {
     @ViewBuilder
     private var optionsPanelView: some View {
         switch appState.selectedTab {
+        case .quickSign:
+            QuickSignView()
         case .convert:
             ConversionOptionsView()
         case .compress:

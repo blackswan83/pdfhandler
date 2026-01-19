@@ -16,7 +16,7 @@ class AppState: ObservableObject {
     // MARK: - Navigation State
     @Published var showFilePicker = false
     @Published var showSidebar = true
-    @Published var selectedTab: AppTab = .convert
+    @Published var selectedTab: AppTab = .quickSign
 
     // MARK: - PDF State
     @Published var selectedPDFs: [PDFDocument] = []
@@ -79,6 +79,13 @@ class AppState: ObservableObject {
     @Published var watermarkOpacity: Double = 0.3
     @Published var watermarkRotation: Double = -45
     @Published var watermarkFontSize: Double = 72
+
+    // MARK: - Quick Sign State
+    @Published var quickSignName: String = ""
+    @Published var quickSignFontStyle: SignatureFontStyle = .elegant
+    @Published var quickSignIncludeDate: Bool = true
+    @Published var quickSignProgress: Double = 0
+    @Published var isQuickSigning = false
 
     // MARK: - Services
     let pdfService = PDFService()
@@ -277,6 +284,7 @@ class AppState: ObservableObject {
 // MARK: - Supporting Types
 
 enum AppTab: String, CaseIterable {
+    case quickSign = "Quick Sign"
     case convert = "Convert"
     case compress = "Compress"
     case merge = "Merge"

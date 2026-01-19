@@ -8,6 +8,44 @@
 import Foundation
 import AppKit
 
+// MARK: - Quick Sign Font Styles
+
+enum SignatureFontStyle: String, CaseIterable, Identifiable {
+    case elegant = "elegant"
+    case classic = "classic"
+    case modern = "modern"
+    case bold = "bold"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .elegant: return "Elegant"
+        case .classic: return "Classic"
+        case .modern: return "Modern"
+        case .bold: return "Bold"
+        }
+    }
+
+    var fontName: String {
+        switch self {
+        case .elegant: return "Snell Roundhand"
+        case .classic: return "Brush Script MT"
+        case .modern: return "Bradley Hand"
+        case .bold: return "Marker Felt"
+        }
+    }
+
+    var fontSize: CGFloat {
+        switch self {
+        case .elegant: return 48
+        case .classic: return 44
+        case .modern: return 40
+        case .bold: return 38
+        }
+    }
+}
+
 // MARK: - Split Options
 
 enum SplitMode: String, CaseIterable, Identifiable {
