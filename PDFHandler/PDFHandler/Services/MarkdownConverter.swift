@@ -30,7 +30,7 @@ actor MarkdownConverter {
 
         // Determine output locations
         let outputDirectory = options.outputDirectory ?? sourceURL.deletingLastPathComponent()
-        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+        let baseName = options.customOutputName ?? sourceURL.deletingPathExtension().lastPathComponent
         let markdownURL = outputDirectory.appendingPathComponent("\(baseName).md")
         let imagesDirectory = outputDirectory.appendingPathComponent("\(baseName)_images")
 

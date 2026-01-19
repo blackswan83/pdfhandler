@@ -16,6 +16,7 @@ struct ConversionOptions {
     var imageNamingConvention: ImageNamingConvention = .sequential
     var tableFallbackMode: TableFallbackMode = .codeBlock
     var outputDirectory: URL?
+    var customOutputName: String?
     var preserveLinks: Bool = true
     var extractImages: Bool = true
     var performOCR: Bool = true

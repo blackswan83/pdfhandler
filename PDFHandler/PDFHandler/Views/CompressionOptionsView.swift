@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import PDFKit
 
 struct CompressionOptionsView: View {
     @EnvironmentObject var appState: AppState
@@ -22,7 +23,7 @@ struct CompressionOptionsView: View {
             // Header
             Text("./compress")
                 .font(SumiTypography.monoTitle)
-                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
 
             // Ghostscript status
             if !ghostscriptAvailable {
@@ -41,16 +42,16 @@ struct CompressionOptionsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("original")
                             .font(SumiTypography.monoSmall)
-                            .foregroundStyle(.stonegrey)
+                            .foregroundStyle(Color.stonegrey)
 
                         if let preview = preview {
                             Text(ByteCountFormatter.string(fromByteCount: preview.originalSize, countStyle: .file))
                                 .font(SumiTypography.mono)
-                                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                         } else {
                             Text("--")
                                 .font(SumiTypography.mono)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                         }
                     }
 
@@ -58,23 +59,23 @@ struct CompressionOptionsView: View {
 
                     Text("→")
                         .font(SumiTypography.mono)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
 
                     Spacer()
 
                     VStack(alignment: .trailing, spacing: 4) {
                         Text("target")
                             .font(SumiTypography.monoSmall)
-                            .foregroundStyle(.stonegrey)
+                            .foregroundStyle(Color.stonegrey)
 
                         if let preview = preview {
                             Text(ByteCountFormatter.string(fromByteCount: preview.estimatedSize, countStyle: .file))
                                 .font(SumiTypography.mono)
-                                .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                         } else {
                             Text("--")
                                 .font(SumiTypography.mono)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                         }
                     }
                 }
@@ -85,7 +86,7 @@ struct CompressionOptionsView: View {
                     range: 0.1...1.0,
                     label: "compression"
                 )
-                .onChange(of: appState.targetCompressionRatio) { _, newValue in
+                .onChange(of: appState.targetCompressionRatio) { newValue in
                     updatePreview()
                     compressionOptions.preset = GhostscriptPreset.forRatio(newValue)
                 }
@@ -94,11 +95,11 @@ struct CompressionOptionsView: View {
                 HStack {
                     Text("preset:")
                         .font(SumiTypography.monoSmall)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
 
                     Text(presetName(for: appState.targetCompressionRatio))
                         .font(SumiTypography.monoSmall)
-                        .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                        .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                 }
             }
             .padding(16)
@@ -109,7 +110,7 @@ struct CompressionOptionsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("presets")
                     .font(SumiTypography.monoSmall)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
 
                 HStack(spacing: 0) {
                     ForEach(GhostscriptPreset.allCases, id: \.self) { preset in
@@ -135,7 +136,7 @@ struct CompressionOptionsView: View {
                         HStack {
                             Text("dpi")
                                 .font(SumiTypography.monoSmall)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                                 .frame(width: 60, alignment: .leading)
 
                             Slider(
@@ -146,11 +147,11 @@ struct CompressionOptionsView: View {
                                 in: 50...300,
                                 step: 10
                             )
-                            .tint(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                            .tint(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
                             Text("\(compressionOptions.imageDPI)")
                                 .font(SumiTypography.monoSmall)
-                                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                                 .frame(width: 40, alignment: .trailing)
                         }
 
@@ -158,26 +159,26 @@ struct CompressionOptionsView: View {
                         HStack {
                             Text("grayscale")
                                 .font(SumiTypography.monoSmall)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
 
                             Spacer()
 
                             Toggle("", isOn: $compressionOptions.convertToGrayscale)
                                 .labelsHidden()
-                                .tint(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                                .tint(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                         }
 
                         // Metadata
                         HStack {
                             Text("keep metadata")
                                 .font(SumiTypography.monoSmall)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
 
                             Spacer()
 
                             Toggle("", isOn: $compressionOptions.preserveMetadata)
                                 .labelsHidden()
-                                .tint(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                                .tint(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                         }
                     }
                     .padding(.top, 12)
@@ -185,7 +186,7 @@ struct CompressionOptionsView: View {
                 label: {
                     Text("--options")
                         .font(SumiTypography.monoSmall)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
                 }
             )
 
@@ -209,7 +210,7 @@ struct CompressionOptionsView: View {
                             .font(SumiTypography.mono)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                     .disabled(appState.currentPDF == nil || !ghostscriptAvailable)
 
                     Button(action: {
@@ -220,7 +221,7 @@ struct CompressionOptionsView: View {
                             .font(SumiTypography.mono)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
                 }
             }
 
@@ -234,7 +235,7 @@ struct CompressionOptionsView: View {
             await checkGhostscript()
             updatePreview()
         }
-        .onChange(of: appState.compressionResults.count) { _, _ in
+        .onChange(of: appState.compressionResults.count) { _ in
             showCompletionAnimation = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 showCompletionAnimation = false
@@ -280,7 +281,7 @@ struct SumiFileInfo: View {
         HStack {
             Text(url.lastPathComponent)
                 .font(SumiTypography.mono)
-                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
@@ -289,7 +290,7 @@ struct SumiFileInfo: View {
             if let preview = preview {
                 Text(ByteCountFormatter.string(fromByteCount: preview.originalSize, countStyle: .file))
                     .font(SumiTypography.monoSmall)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
             }
         }
         .padding(12)
@@ -313,7 +314,7 @@ struct SumiPresetButton: View {
                 .foregroundStyle(
                     isSelected
                         ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                        : .stonegrey
+                        : Color.stonegrey
                 )
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -348,13 +349,13 @@ struct SumiCompressionResult: View {
             // Success line
             HStack(spacing: 4) {
                 Text("✓")
-                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
                 Text("done")
-                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
                 Text("in \(String(format: "%.1f", result.processingTime))s")
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
 
                 // Blinking cursor
                 Rectangle()
@@ -373,16 +374,16 @@ struct SumiCompressionResult: View {
             // Size comparison
             HStack(spacing: 8) {
                 Text(result.formattedOriginalSize)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
 
                 Text("→")
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
 
                 Text(result.formattedCompressedSize)
-                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
 
                 Text("(-\(Int(result.savedPercentage))%)")
-                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
             }
             .font(SumiTypography.monoSmall)
 
@@ -394,7 +395,7 @@ struct SumiCompressionResult: View {
                     Text("[reveal]")
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.stonegrey)
+                .foregroundStyle(Color.stonegrey)
 
                 Button(action: {
                     NSWorkspace.shared.open(result.outputURL)
@@ -402,7 +403,7 @@ struct SumiCompressionResult: View {
                     Text("[open]")
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.stonegrey)
+                .foregroundStyle(Color.stonegrey)
             }
             .font(SumiTypography.monoSmall)
         }
@@ -432,7 +433,7 @@ struct SumiGhostscriptWarning: View {
 
             Text("brew install ghostscript")
                 .font(SumiTypography.monoSmall)
-                .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                 .padding(8)
                 .background(colorScheme == .dark ? Color.sumiGrey : Color.ashGrey.opacity(0.5))
                 .cornerRadius(2)

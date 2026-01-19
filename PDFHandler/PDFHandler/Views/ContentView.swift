@@ -35,36 +35,14 @@ struct ContentView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                // Minimal text buttons
+            ToolbarItem(placement: .primaryAction) {
                 Button(action: { appState.showFilePicker = true }) {
-                    Text("open")
+                    Text("[open]")
                         .font(SumiTypography.mono)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(colorScheme == .dark ? .white : .stonegrey)
+                .foregroundStyle(colorScheme == .dark ? .white : Color.stonegrey)
                 .keyboardShortcut("o", modifiers: .command)
-
-                if !appState.selectedPDFs.isEmpty {
-                    Text("·")
-                        .foregroundStyle(.stonegrey)
-
-                    Button(action: { appState.convertCurrentPDF() }) {
-                        Text("convert")
-                            .font(SumiTypography.mono)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
-                    .disabled(appState.isConverting)
-
-                    Button(action: { appState.compressCurrentPDF() }) {
-                        Text("compress")
-                            .font(SumiTypography.mono)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(colorScheme == .dark ? .white : .stonegrey)
-                    .disabled(appState.isCompressing)
-                }
             }
         }
         .fileImporter(
@@ -152,13 +130,13 @@ struct SumiDropZoneView: View {
                 HStack(spacing: 4) {
                     Text("drop")
                         .font(SumiTypography.command)
-                        .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                        .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
 
                     Text(".pdf")
                         .font(SumiTypography.command)
-                        .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                        .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
-                    CursorBlinkView(color: colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                    CursorBlinkView(color: colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
                         .opacity(isDragging ? 0 : 1)
                 }
 
@@ -194,21 +172,26 @@ struct SumiSidebarView: View {
         List(selection: $appState.selectedTab) {
             Section {
                 ForEach(AppTab.allCases, id: \.self) { tab in
-                    HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(commandForTab(tab))
                             .font(SumiTypography.mono)
                             .foregroundStyle(
                                 appState.selectedTab == tab
                                     ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                                    : (colorScheme == .dark ? .white : .inkBlack)
+                                    : (colorScheme == .dark ? .white : Color.inkBlack)
                             )
+                        Text(descriptionForTab(tab))
+                            .font(SumiTypography.monoSmall)
+                            .foregroundStyle(Color.stonegrey)
+                            .lineLimit(2)
                     }
+                    .padding(.vertical, 4)
                     .tag(tab)
                 }
             } header: {
                 Text("commands")
                     .font(SumiTypography.monoSmall)
-                    .foregroundStyle(.stonegrey)
+                    .foregroundStyle(Color.stonegrey)
             }
 
             if !appState.selectedPDFURLs.isEmpty {
@@ -217,7 +200,7 @@ struct SumiSidebarView: View {
                         HStack(spacing: 8) {
                             Text("→")
                                 .font(SumiTypography.mono)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
 
                             Text(url.lastPathComponent)
                                 .font(SumiTypography.mono)
@@ -226,13 +209,15 @@ struct SumiSidebarView: View {
                         }
                         .tag(index)
                         .onTapGesture {
-                            appState.currentPDFIndex = index
+                            Task { @MainActor in
+                                appState.currentPDFIndex = index
+                            }
                         }
                     }
                 } header: {
                     Text("open")
                         .font(SumiTypography.monoSmall)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
                 }
             }
 
@@ -242,7 +227,7 @@ struct SumiSidebarView: View {
                         HStack(spacing: 8) {
                             Text("✓")
                                 .font(SumiTypography.mono)
-                                .foregroundStyle(colorScheme == .dark ? .phosphorGreen : .terminalGreen)
+                                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(result.outputURL.lastPathComponent)
@@ -251,14 +236,14 @@ struct SumiSidebarView: View {
 
                                 Text("\(result.processingTime, specifier: "%.1f")s")
                                     .font(SumiTypography.monoSmall)
-                                    .foregroundStyle(.stonegrey)
+                                    .foregroundStyle(Color.stonegrey)
                             }
                         }
                     }
                 } header: {
                     Text("history")
                         .font(SumiTypography.monoSmall)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
                 }
             }
         }
@@ -268,9 +253,31 @@ struct SumiSidebarView: View {
 
     private func commandForTab(_ tab: AppTab) -> String {
         switch tab {
+        case .quickSign: return "./quick-sign"
         case .convert: return "./convert"
         case .compress: return "./compress"
+        case .merge: return "./merge"
+        case .split: return "./split"
+        case .rotate: return "./rotate"
+        case .sign: return "./sign"
+        case .protect: return "./protect"
+        case .watermark: return "./watermark"
         case .batch: return "./batch"
+        }
+    }
+
+    private func descriptionForTab(_ tab: AppTab) -> String {
+        switch tab {
+        case .quickSign: return "Type to sign (easy)"
+        case .convert: return "PDF → Markdown"
+        case .compress: return "Reduce file size"
+        case .merge: return "Combine PDFs"
+        case .split: return "Split into pages"
+        case .rotate: return "Rotate pages"
+        case .sign: return "Draw signature"
+        case .protect: return "Password protect"
+        case .watermark: return "Add watermark"
+        case .batch: return "Batch process"
         }
     }
 }
@@ -283,26 +290,45 @@ struct SumiWorkspaceView: View {
 
     var body: some View {
         HSplitView {
-            // PDF Preview
-            SumiPDFPreviewView()
-                .frame(minWidth: 400)
+            // PDF Preview (show for most tabs, hide for merge/quickSign which have their own layout)
+            if appState.selectedTab != .merge && appState.selectedTab != .quickSign {
+                SumiPDFPreviewView()
+                    .frame(minWidth: 400)
+            }
 
             // Options Panel
-            ScrollView {
-                VStack {
-                    switch appState.selectedTab {
-                    case .convert:
-                        ConversionOptionsView()
-                    case .compress:
-                        CompressionOptionsView()
-                    case .batch:
-                        BatchProcessingView()
-                    }
-                }
-                .frame(minWidth: 300, maxWidth: 400)
-                .padding()
-            }
-            .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
+            optionsPanelView
+                .frame(
+                    minWidth: 300,
+                    maxWidth: (appState.selectedTab == .merge || appState.selectedTab == .quickSign) ? .infinity : 400
+                )
+                .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
+        }
+    }
+
+    @ViewBuilder
+    private var optionsPanelView: some View {
+        switch appState.selectedTab {
+        case .quickSign:
+            QuickSignView()
+        case .convert:
+            ConversionOptionsView()
+        case .compress:
+            CompressionOptionsView()
+        case .merge:
+            MergeOptionsView()
+        case .split:
+            SplitOptionsView()
+        case .rotate:
+            RotateOptionsView()
+        case .sign:
+            SignOptionsView()
+        case .protect:
+            ProtectOptionsView()
+        case .watermark:
+            WatermarkOptionsView()
+        case .batch:
+            BatchProcessingView()
         }
     }
 }
@@ -320,7 +346,7 @@ struct SumiPDFPreviewView: View {
                 if let url = appState.currentPDFURL {
                     Text(url.lastPathComponent)
                         .font(SumiTypography.mono)
-                        .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                        .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                         .lineLimit(1)
 
                     Spacer()
@@ -328,14 +354,14 @@ struct SumiPDFPreviewView: View {
                     if let pdf = appState.currentPDF {
                         Text("\(pdf.pageCount)p")
                             .font(SumiTypography.monoSmall)
-                            .foregroundStyle(.stonegrey)
+                            .foregroundStyle(Color.stonegrey)
 
                         if let size = fileSize(for: url) {
                             Text("·")
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                             Text(size)
                                 .font(SumiTypography.monoSmall)
-                                .foregroundStyle(.stonegrey)
+                                .foregroundStyle(Color.stonegrey)
                         }
                     }
                 }
@@ -355,7 +381,7 @@ struct SumiPDFPreviewView: View {
                 VStack {
                     Text("no file")
                         .font(SumiTypography.mono)
-                        .foregroundStyle(.stonegrey)
+                        .foregroundStyle(Color.stonegrey)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -404,7 +430,7 @@ struct SumiMarkdownPreviewSheet: View {
             HStack {
                 Text("output.md")
                     .font(SumiTypography.mono)
-                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
 
                 Spacer()
 
@@ -431,7 +457,7 @@ struct SumiMarkdownPreviewSheet: View {
             ScrollView {
                 Text(appState.previewMarkdown)
                     .font(SumiTypography.mono)
-                    .foregroundStyle(colorScheme == .dark ? .white : .inkBlack)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
