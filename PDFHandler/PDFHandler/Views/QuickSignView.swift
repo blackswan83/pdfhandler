@@ -15,6 +15,9 @@ struct QuickSignView: View {
     @Environment(\.colorScheme) var colorScheme
     @State private var statusMessage = ""
     @State private var isSuccess = false
+    @State private var selectedPosition: SignaturePosition = .bottomRight
+    @State private var selectedPage: Int = 1
+    @State private var signLastPage: Bool = true
 
     var body: some View {
         ScrollView {
@@ -212,6 +215,74 @@ struct QuickSignView: View {
                         .background(Color.stonegrey.opacity(0.05))
                         .cornerRadius(12)
 
+                        // Position selection
+                        VStack(alignment: .leading, spacing: 12) {
+                            Label("Where to sign", systemImage: "square.grid.3x3")
+                                .font(.system(size: 18, weight: .medium, design: .rounded))
+                                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
+
+                            // 3x3 position grid
+                            VStack(spacing: 6) {
+                                HStack(spacing: 6) {
+                                    positionButton(.topLeft, label: "↖")
+                                    positionButton(.topCenter, label: "↑")
+                                    positionButton(.topRight, label: "↗")
+                                }
+                                HStack(spacing: 6) {
+                                    positionButton(.centerLeft, label: "←")
+                                    positionButton(.center, label: "●")
+                                    positionButton(.centerRight, label: "→")
+                                }
+                                HStack(spacing: 6) {
+                                    positionButton(.bottomLeft, label: "↙")
+                                    positionButton(.bottomCenter, label: "↓")
+                                    positionButton(.bottomRight, label: "↘")
+                                }
+                            }
+                            .padding(12)
+                            .background(Color.stonegrey.opacity(0.05))
+                            .cornerRadius(12)
+
+                            Text("Selected: \(selectedPosition.displayName)")
+                                .font(.system(size: 14, design: .rounded))
+                                .foregroundStyle(Color.stonegrey)
+                        }
+
+                        // Page selection
+                        if let pdf = appState.currentPDF, pdf.pageCount > 1 {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Label("Which page", systemImage: "doc.on.doc")
+                                    .font(.system(size: 18, weight: .medium, design: .rounded))
+                                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
+
+                                VStack(spacing: 12) {
+                                    Toggle(isOn: $signLastPage) {
+                                        Text("Sign last page (\(pdf.pageCount))")
+                                            .font(.system(size: 16, design: .rounded))
+                                    }
+                                    .toggleStyle(.checkbox)
+
+                                    if !signLastPage {
+                                        HStack {
+                                            Text("Page:")
+                                                .font(.system(size: 16, design: .rounded))
+
+                                            Picker("", selection: $selectedPage) {
+                                                ForEach(1...pdf.pageCount, id: \.self) { page in
+                                                    Text("\(page)").tag(page)
+                                                }
+                                            }
+                                            .pickerStyle(.menu)
+                                            .frame(width: 80)
+                                        }
+                                    }
+                                }
+                                .padding(12)
+                                .background(Color.stonegrey.opacity(0.05))
+                                .cornerRadius(12)
+                            }
+                        }
+
                         Divider()
                             .padding(.vertical, 8)
 
@@ -273,6 +344,27 @@ struct QuickSignView: View {
         return formatter.string(from: Date())
     }
 
+    @ViewBuilder
+    private func positionButton(_ position: SignaturePosition, label: String) -> some View {
+        Button(action: { selectedPosition = position }) {
+            Text(label)
+                .font(.system(size: 16, weight: .medium))
+                .frame(width: 44, height: 36)
+                .background(
+                    selectedPosition == position
+                        ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
+                        : Color.stonegrey.opacity(0.2)
+                )
+                .foregroundStyle(
+                    selectedPosition == position
+                        ? Color.inkBlack
+                        : (colorScheme == .dark ? .white : Color.inkBlack)
+                )
+                .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+
     private func performQuickSign() {
         guard let url = appState.currentPDFURL,
               let pdf = appState.currentPDF,
@@ -293,13 +385,14 @@ struct QuickSignView: View {
 
                 appState.quickSignProgress = 0.3
 
-                // Apply signature to last page, bottom right
+                // Apply signature to selected position and page
+                let pageToSign = signLastPage ? pdf.pageCount : selectedPage
                 let options = SignatureOptions(
                     signatureImage: signatureImage,
-                    position: .bottomRight,
+                    position: selectedPosition,
                     width: 200,
                     height: appState.quickSignIncludeDate ? 80 : 60,
-                    page: pdf.pageCount, // Last page
+                    page: pageToSign,
                     applyToAllPages: false
                 )
 
