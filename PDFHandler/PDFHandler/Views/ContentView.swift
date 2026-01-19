@@ -255,15 +255,27 @@ struct SumiSidebarView: View {
         switch tab {
         case .convert: return "./convert"
         case .compress: return "./compress"
+        case .merge: return "./merge"
+        case .split: return "./split"
+        case .rotate: return "./rotate"
+        case .sign: return "./sign"
+        case .protect: return "./protect"
+        case .watermark: return "./watermark"
         case .batch: return "./batch"
         }
     }
 
     private func descriptionForTab(_ tab: AppTab) -> String {
         switch tab {
-        case .convert: return "PDF → Markdown with images"
-        case .compress: return "Reduce file size with Ghostscript"
-        case .batch: return "Process multiple files at once"
+        case .convert: return "PDF → Markdown"
+        case .compress: return "Reduce file size"
+        case .merge: return "Combine PDFs"
+        case .split: return "Split into pages"
+        case .rotate: return "Rotate pages"
+        case .sign: return "Add signature"
+        case .protect: return "Password protect"
+        case .watermark: return "Add watermark"
+        case .batch: return "Batch process"
         }
     }
 }
@@ -276,26 +288,40 @@ struct SumiWorkspaceView: View {
 
     var body: some View {
         HSplitView {
-            // PDF Preview
-            SumiPDFPreviewView()
-                .frame(minWidth: 400)
+            // PDF Preview (show for most tabs, hide for merge which has its own file list)
+            if appState.selectedTab != .merge {
+                SumiPDFPreviewView()
+                    .frame(minWidth: 400)
+            }
 
             // Options Panel
-            ScrollView {
-                VStack {
-                    switch appState.selectedTab {
-                    case .convert:
-                        ConversionOptionsView()
-                    case .compress:
-                        CompressionOptionsView()
-                    case .batch:
-                        BatchProcessingView()
-                    }
-                }
-                .frame(minWidth: 300, maxWidth: 400)
-                .padding()
-            }
-            .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
+            optionsPanelView
+                .frame(minWidth: 300, maxWidth: appState.selectedTab == .merge ? .infinity : 400)
+                .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
+        }
+    }
+
+    @ViewBuilder
+    private var optionsPanelView: some View {
+        switch appState.selectedTab {
+        case .convert:
+            ConversionOptionsView()
+        case .compress:
+            CompressionOptionsView()
+        case .merge:
+            MergeOptionsView()
+        case .split:
+            SplitOptionsView()
+        case .rotate:
+            RotateOptionsView()
+        case .sign:
+            SignOptionsView()
+        case .protect:
+            ProtectOptionsView()
+        case .watermark:
+            WatermarkOptionsView()
+        case .batch:
+            BatchProcessingView()
         }
     }
 }

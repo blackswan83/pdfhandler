@@ -38,11 +38,54 @@ class AppState: ObservableObject {
     @Published var showPreview = false
     @Published var previewMarkdown: String = ""
 
+    // MARK: - Merge State
+    @Published var mergeProgress: Double = 0
+    @Published var isMerging = false
+    @Published var pdfFilesToMerge: [URL] = []
+
+    // MARK: - Split State
+    @Published var splitProgress: Double = 0
+    @Published var isSplitting = false
+    @Published var splitMode: SplitMode = .allPages
+    @Published var splitPageRanges: String = ""
+
+    // MARK: - Rotate State
+    @Published var rotateProgress: Double = 0
+    @Published var isRotating = false
+    @Published var rotationAngle: Int = 90
+    @Published var rotateAllPages = true
+    @Published var rotatePagesToRotate: String = ""
+
+    // MARK: - Signature State
+    @Published var signatureProgress: Double = 0
+    @Published var isSigning = false
+    @Published var savedSignatures: [SavedSignature] = []
+    @Published var currentSignatureImage: NSImage?
+    @Published var signaturePage: Int = 1
+    @Published var signaturePosition: SignaturePosition = .bottomRight
+
+    // MARK: - Security State
+    @Published var securityProgress: Double = 0
+    @Published var isApplyingSecurity = false
+    @Published var ownerPassword: String = ""
+    @Published var userPassword: String = ""
+    @Published var allowPrinting = true
+    @Published var allowCopying = false
+
+    // MARK: - Watermark State
+    @Published var watermarkProgress: Double = 0
+    @Published var isApplyingWatermark = false
+    @Published var watermarkText: String = "CONFIDENTIAL"
+    @Published var watermarkOpacity: Double = 0.3
+    @Published var watermarkRotation: Double = -45
+    @Published var watermarkFontSize: Double = 72
+
     // MARK: - Services
     let pdfService = PDFService()
     let markdownConverter = MarkdownConverter()
     let compressionService = CompressionService()
     let ocrService = OCRService()
+    let pdfToolsService = PDFToolsService()
 
     // MARK: - Preferences
     @AppStorage("outputDirectory") var outputDirectory: String = ""
@@ -234,9 +277,15 @@ class AppState: ObservableObject {
 // MARK: - Supporting Types
 
 enum AppTab: String, CaseIterable {
-    case convert = "Convert to Markdown"
-    case compress = "Compress PDF"
-    case batch = "Batch Processing"
+    case convert = "Convert"
+    case compress = "Compress"
+    case merge = "Merge"
+    case split = "Split"
+    case rotate = "Rotate"
+    case sign = "Sign"
+    case protect = "Protect"
+    case watermark = "Watermark"
+    case batch = "Batch"
 }
 
 extension Collection {
