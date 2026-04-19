@@ -396,3 +396,10 @@ struct SignatureCaptureView: View {
         colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen
     }
 }
+
+#Preview("Capture") {
+    SignatureCaptureView { _ in }
+        .padding(20)
+        .frame(width: 420, height: 320)
+}
+

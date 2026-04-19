@@ -256,3 +256,49 @@ private struct PagePreview: NSViewRepresentable {
         }
     }
 }
+
+// MARK: - Preview
+
+private func previewFixtureDocument() -> PDFDocument {
+    // A blank letter-size page so the placement canvas renders without
+    // needing an on-disk PDF.
+    let page = PDFPage()
+    page.setBounds(CGRect(x: 0, y: 0, width: 612, height: 792), for: .mediaBox)
+    let doc = PDFDocument()
+    doc.insert(page, at: 0)
+    return doc
+}
+
+private func previewFixtureSignature() -> NSImage {
+    let size = NSSize(width: 220, height: 64)
+    let img = NSImage(size: size)
+    img.lockFocus()
+    NSColor.clear.setFill()
+    NSRect(origin: .zero, size: size).fill()
+    let attrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont(name: "Snell Roundhand", size: 42) ?? .systemFont(ofSize: 42),
+        .foregroundColor: NSColor.black
+    ]
+    ("Jane Doe" as NSString).draw(at: NSPoint(x: 12, y: 10), withAttributes: attrs)
+    img.unlockFocus()
+    return img
+}
+
+#Preview("Placement") {
+    StatefulPlacementPreview()
+        .frame(width: 720, height: 640)
+}
+
+private struct StatefulPlacementPreview: View {
+    @State private var pageIndex = 0
+    var body: some View {
+        SignaturePlacementView(
+            document: previewFixtureDocument(),
+            signatureImage: previewFixtureSignature(),
+            pageIndex: $pageIndex,
+            onPlacementChange: { _ in }
+        )
+        .padding(16)
+    }
+}
+

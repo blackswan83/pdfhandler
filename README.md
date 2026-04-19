@@ -57,20 +57,29 @@ git clone https://github.com/yourusername/pdfhandler.git
 cd pdfhandler
 ```
 
-2. Open in Xcode:
+2. Open the Swift package in Xcode (the `.xcodeproj` is stale — don't use it):
 ```bash
-open PDFHandler/PDFHandler.xcodeproj
+xed PDFHandler/Package.swift
 ```
 
-3. Build and run (⌘R)
+3. Build and run (⌘R), or use SwiftUI Previews on any `View` for a sub-2s UI loop.
 
-### Swift Package Manager
-
-The project can also be built using Swift Package Manager:
+### Fast iteration from the terminal
 
 ```bash
-cd PDFHandler
-swift build
+./scripts/dev.sh          # debug build → launch a real .app bundle
+./scripts/dev.sh --watch  # rebuild + relaunch on any .swift change (needs fswatch)
+```
+
+`dev.sh` wraps the SwiftPM debug output in `build/PDF Handler (Debug).app` so
+`MenuBarExtra`, dock icon, document types, and services all behave correctly —
+`swift run` on the bare executable does not.
+
+### Release build
+
+```bash
+./scripts/package.sh      # produces build/PDF Handler.app and build/PDFHandler.dmg
+./scripts/package.sh --app-only
 ```
 
 ## Usage
