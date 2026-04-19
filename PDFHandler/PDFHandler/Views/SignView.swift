@@ -2,324 +2,308 @@
 //  SignView.swift
 //  PDFHandler
 //
-//  View for adding signatures to PDFs
+//  Unified signing experience: capture once (draw/type/image),
+//  persist as Identity (signature + initials), place on the page, sign.
 //
 
 import SwiftUI
 import PDFKit
 import AppKit
 
-struct SignOptionsView: View {
+struct SignView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.colorScheme) var colorScheme
-    @State private var showImagePicker = false
-    @State private var signatureWidth: Double = 150
-    @State private var signatureHeight: Double = 50
-    @State private var applyToAllPages = false
-    @State private var statusMessage = ""
-    @State private var isSuccess = false
-    @State private var isDrawing = false
-    @State private var drawingPath = Path()
-    @State private var currentPoint: CGPoint = .zero
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Header
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("$ ./sign")
-                        .font(SumiTypography.monoLarge)
-                        .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                    Text("Add signature to PDF document")
-                        .font(SumiTypography.monoSmall)
-                        .foregroundStyle(Color.stonegrey)
-                }
-                .padding(.bottom, 8)
+        SignViewContent(identityStore: appState.identityStore)
+            .environmentObject(appState)
+    }
+}
 
-                if appState.currentPDF == nil {
-                    Text("No PDF selected. Open a file first.")
-                        .font(SumiTypography.mono)
-                        .foregroundStyle(Color.stonegrey)
-                        .padding(.vertical, 20)
+private struct SignViewContent: View {
+    @EnvironmentObject var appState: AppState
+    @ObservedObject var identityStore: SignatureIdentityStore
+    @Environment(\.colorScheme) var colorScheme
+
+    @State private var workingAsset: SignatureAsset?
+    @State private var activeSlot: SignatureIdentity.Slot = .signature
+    @State private var placement: SignaturePlacement?
+    @State private var pageIndex: Int = 0
+    @State private var applyToAllPages: Bool = false
+    @State private var statusMessage: String = ""
+    @State private var isSuccess: Bool = false
+    @State private var isCapturing: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            header
+
+            if appState.currentPDF == nil {
+                emptyState
+            } else {
+                identityBar
+                Divider().background(Color.stonegrey.opacity(0.3))
+
+                if isCapturing || effectiveAsset == nil {
+                    capturePane
                 } else {
-                    // Current file info
-                    if let url = appState.currentPDFURL, let pdf = appState.currentPDF {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("--input")
-                                .font(SumiTypography.mono)
-                                .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-                            Text(url.lastPathComponent)
-                                .font(SumiTypography.monoSmall)
-                                .foregroundStyle(Color.stonegrey)
-                            Text("\(pdf.pageCount) pages")
-                                .font(SumiTypography.monoSmall)
-                                .foregroundStyle(Color.stonegrey)
-                        }
-                    }
-
-                    Divider()
-                        .background(Color.stonegrey.opacity(0.3))
-
-                    // Signature input methods
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("--signature")
-                            .font(SumiTypography.mono)
-                            .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-
-                        HStack(spacing: 12) {
-                            // Draw button
-                            Button(action: { isDrawing = true }) {
-                                VStack(spacing: 8) {
-                                    Image(systemName: "pencil.tip")
-                                        .font(.system(size: 20))
-                                    Text("Draw")
-                                        .font(SumiTypography.monoSmall)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(Color.stonegrey.opacity(0.1))
-                                .cornerRadius(4)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-
-                            // Import button
-                            Button(action: importSignatureImage) {
-                                VStack(spacing: 8) {
-                                    Image(systemName: "photo")
-                                        .font(.system(size: 20))
-                                    Text("Import")
-                                        .font(SumiTypography.monoSmall)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(Color.stonegrey.opacity(0.1))
-                                .cornerRadius(4)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-                        }
-
-                        // Signature preview
-                        if let image = appState.currentSignatureImage {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Preview:")
-                                    .font(SumiTypography.monoSmall)
-                                    .foregroundStyle(Color.stonegrey)
-
-                                HStack {
-                                    Image(nsImage: image)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fit)
-                                        .frame(height: 60)
-                                        .padding(8)
-                                        .background(Color.white)
-                                        .cornerRadius(4)
-
-                                    Spacer()
-
-                                    Button(action: { appState.currentSignatureImage = nil }) {
-                                        Text("[clear]")
-                                            .font(SumiTypography.monoSmall)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .foregroundStyle(Color.red.opacity(0.8))
-                                }
-                            }
-                        }
-                    }
-
-                    // Drawing canvas (shown when drawing mode is active)
-                    if isDrawing {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Draw your signature:")
-                                .font(SumiTypography.monoSmall)
-                                .foregroundStyle(Color.stonegrey)
-
-                            SignatureCanvasView(
-                                path: $drawingPath,
-                                onComplete: { image in
-                                    appState.currentSignatureImage = image
-                                    isDrawing = false
-                                    drawingPath = Path()
-                                },
-                                onCancel: {
-                                    isDrawing = false
-                                    drawingPath = Path()
-                                }
-                            )
-                            .frame(height: 150)
-                        }
-                    }
-
-                    Divider()
-                        .background(Color.stonegrey.opacity(0.3))
-
-                    // Position selection
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("--position")
-                            .font(SumiTypography.mono)
-                            .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-
-                        // 3x3 grid for position
-                        VStack(spacing: 4) {
-                            HStack(spacing: 4) {
-                                positionButton(.topLeft)
-                                positionButton(.topCenter)
-                                positionButton(.topRight)
-                            }
-                            HStack(spacing: 4) {
-                                positionButton(.centerLeft)
-                                positionButton(.center)
-                                positionButton(.centerRight)
-                            }
-                            HStack(spacing: 4) {
-                                positionButton(.bottomLeft)
-                                positionButton(.bottomCenter)
-                                positionButton(.bottomRight)
-                            }
-                        }
-                    }
-
-                    Divider()
-                        .background(Color.stonegrey.opacity(0.3))
-
-                    // Size controls
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("--size")
-                            .font(SumiTypography.mono)
-                            .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-
-                        HStack {
-                            Text("Width: \(Int(signatureWidth))px")
-                                .font(SumiTypography.monoSmall)
-                                .foregroundStyle(Color.stonegrey)
-                            Slider(value: $signatureWidth, in: 50...300, step: 10)
-                                .tint(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                        }
-
-                        HStack {
-                            Text("Height: \(Int(signatureHeight))px")
-                                .font(SumiTypography.monoSmall)
-                                .foregroundStyle(Color.stonegrey)
-                            Slider(value: $signatureHeight, in: 20...150, step: 5)
-                                .tint(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                        }
-                    }
-
-                    Divider()
-                        .background(Color.stonegrey.opacity(0.3))
-
-                    // Page selection
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("--page")
-                            .font(SumiTypography.mono)
-                            .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-
-                        Toggle(isOn: $applyToAllPages) {
-                            Text("Apply to all pages")
-                                .font(SumiTypography.mono)
-                        }
-                        .toggleStyle(.checkbox)
-
-                        if !applyToAllPages {
-                            Stepper(
-                                "Page \(appState.signaturePage)",
-                                value: $appState.signaturePage,
-                                in: 1...(appState.currentPDF?.pageCount ?? 1)
-                            )
-                            .font(SumiTypography.mono)
-                        }
-                    }
-
-                    Divider()
-                        .background(Color.stonegrey.opacity(0.3))
-
-                    // Progress
-                    if appState.isSigning {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("signing...")
-                                .font(SumiTypography.mono)
-                                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-
-                            ProgressView(value: appState.signatureProgress)
-                                .tint(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-
-                            Text("\(Int(appState.signatureProgress * 100))%")
-                                .font(SumiTypography.monoSmall)
-                                .foregroundStyle(Color.stonegrey)
-                        }
-                    }
-
-                    // Status message
-                    if !statusMessage.isEmpty {
-                        Text(statusMessage)
-                            .font(SumiTypography.monoSmall)
-                            .foregroundStyle(isSuccess ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen) : Color.red)
-                    }
-
-                    Spacer()
-
-                    // Sign button
-                    Button(action: performSign) {
-                        Text("[sign document]")
-                            .font(SumiTypography.mono)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                    }
-                    .buttonStyle(.plain)
-                    .background(
-                        appState.currentSignatureImage != nil
-                            ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                            : Color.stonegrey.opacity(0.3)
-                    )
-                    .foregroundStyle(
-                        appState.currentSignatureImage != nil
-                            ? Color.inkBlack
-                            : Color.stonegrey
-                    )
-                    .cornerRadius(4)
-                    .disabled(appState.isSigning || appState.currentPDF == nil || appState.currentSignatureImage == nil)
+                    placementPane
                 }
             }
-            .padding(20)
+        }
+        .padding(20)
+        .onChange(of: appState.currentPDFURL) { _ in
+            pageIndex = 0
+            placement = nil
+            statusMessage = ""
+        }
+    }
+
+    // MARK: Sections
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("$ ./sign")
+                .font(SumiTypography.monoLarge)
+                .foregroundStyle(accent)
+            Text("Capture once · drag to place · sign.")
+                .font(SumiTypography.monoSmall)
+                .foregroundStyle(Color.stonegrey)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "doc.badge.plus")
+                .font(.system(size: 40))
+                .foregroundStyle(Color.stonegrey)
+            Text("open a PDF to sign")
+                .font(SumiTypography.mono)
+                .foregroundStyle(Color.stonegrey)
+            Button(action: { appState.showFilePicker = true }) {
+                Text("[choose file]")
+                    .font(SumiTypography.mono)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(accent)
+                    .foregroundStyle(Color.inkBlack)
+                    .cornerRadius(4)
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: Identity bar
+
+    private var identityBar: some View {
+        let identity = appState.identityStore.identity
+        return HStack(alignment: .top, spacing: 12) {
+            slotChip(
+                label: "Signature",
+                asset: identity.signature,
+                isActive: activeSlot == .signature && !isCapturing,
+                tall: true,
+                onTap: { useSlot(.signature) },
+                onReplace: { startCapture(for: .signature) },
+                onClear: { appState.identityStore.clear(.signature) }
+            )
+            slotChip(
+                label: "Initials",
+                asset: identity.initials,
+                isActive: activeSlot == .initials && !isCapturing,
+                tall: false,
+                onTap: { useSlot(.initials) },
+                onReplace: { startCapture(for: .initials) },
+                onClear: { appState.identityStore.clear(.initials) }
+            )
+            Spacer()
         }
     }
 
     @ViewBuilder
-    private func positionButton(_ position: SignaturePosition) -> some View {
-        Button(action: { appState.signaturePosition = position }) {
-            Rectangle()
-                .fill(
-                    appState.signaturePosition == position
-                        ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                        : Color.stonegrey.opacity(0.2)
-                )
-                .frame(width: 40, height: 30)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 2)
-                        .stroke(Color.stonegrey.opacity(0.5), lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-    }
+    private func slotChip(
+        label: String,
+        asset: SignatureAsset?,
+        isActive: Bool,
+        tall: Bool,
+        onTap: @escaping () -> Void,
+        onReplace: @escaping () -> Void,
+        onClear: @escaping () -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(SumiTypography.monoSmall)
+                .foregroundStyle(Color.stonegrey)
 
-    private func importSignatureImage() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.png, .jpeg, .tiff]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
+            if let asset = asset, let img = asset.image {
+                Button(action: onTap) {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: tall ? 180 : 90, height: 48)
+                        .padding(8)
+                        .background(Color.white)
+                        .cornerRadius(4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(isActive ? accent : Color.mist, lineWidth: isActive ? 2 : 1)
+                        )
+                }
+                .buttonStyle(.plain)
 
-        if panel.runModal() == .OK, let url = panel.url {
-            if let image = NSImage(contentsOf: url) {
-                appState.currentSignatureImage = image
+                HStack(spacing: 8) {
+                    Button(action: onReplace) {
+                        Text("[replace]").font(SumiTypography.monoSmall)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.stonegrey)
+
+                    Button(action: onClear) {
+                        Text("[×]").font(SumiTypography.monoSmall)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.red.opacity(0.8))
+                }
+            } else {
+                Button(action: onReplace) {
+                    VStack(spacing: 4) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14))
+                        Text("add \(label.lowercased())")
+                            .font(SumiTypography.monoSmall)
+                    }
+                    .frame(width: tall ? 180 : 90, height: 48)
+                    .padding(8)
+                    .foregroundStyle(Color.stonegrey)
+                    .background(Color.stonegrey.opacity(0.06))
+                    .cornerRadius(4)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.mist, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                    )
+                }
+                .buttonStyle(.plain)
             }
         }
     }
 
-    private func performSign() {
+    // MARK: Capture pane
+
+    private var capturePane: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("new \(activeSlot == .initials ? "initials" : "signature")")
+                    .font(SumiTypography.mono)
+                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
+
+                Spacer()
+
+                if effectiveAsset != nil {
+                    Button(action: { isCapturing = false }) {
+                        Text("[cancel]").font(SumiTypography.monoSmall)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.stonegrey)
+                }
+            }
+
+            SignatureCaptureView { asset in
+                appState.identityStore.set(asset, for: activeSlot)
+                workingAsset = asset
+                isCapturing = false
+            }
+        }
+    }
+
+    // MARK: Placement pane
+
+    @ViewBuilder
+    private var placementPane: some View {
+        if let asset = effectiveAsset, let image = asset.image, let pdf = appState.currentPDF {
+            VStack(spacing: 12) {
+                SignaturePlacementView(
+                    document: pdf,
+                    signatureImage: image,
+                    pageIndex: $pageIndex,
+                    onPlacementChange: { placement = $0 }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(colorScheme == .dark ? Color.sumiGrey.opacity(0.3) : Color.white.opacity(0.6))
+                .cornerRadius(6)
+
+                actionBar
+            }
+        }
+    }
+
+    private var actionBar: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 16) {
+                Toggle(isOn: $applyToAllPages) {
+                    Text("Apply to all pages")
+                        .font(SumiTypography.monoSmall)
+                }
+                .toggleStyle(.checkbox)
+
+                Spacer()
+
+                if appState.isSigning {
+                    ProgressView(value: appState.signatureProgress)
+                        .progressViewStyle(.linear)
+                        .tint(accent)
+                        .frame(width: 120)
+                }
+
+                Button(action: signDocument) {
+                    Text(appState.isSigning ? "[signing…]" : "[sign document]")
+                        .font(SumiTypography.mono)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(accent)
+                        .foregroundStyle(Color.inkBlack)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(appState.isSigning || effectiveAsset == nil || placement == nil)
+            }
+
+            if !statusMessage.isEmpty {
+                Text(statusMessage)
+                    .font(SumiTypography.monoSmall)
+                    .foregroundStyle(isSuccess ? accent : Color.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    // MARK: Logic
+
+    private var effectiveAsset: SignatureAsset? {
+        if isCapturing { return workingAsset }
+        switch activeSlot {
+        case .signature: return appState.identityStore.identity.signature ?? workingAsset
+        case .initials:  return appState.identityStore.identity.initials  ?? workingAsset
+        }
+    }
+
+    private func useSlot(_ slot: SignatureIdentity.Slot) {
+        activeSlot = slot
+        isCapturing = false
+        workingAsset = nil
+    }
+
+    private func startCapture(for slot: SignatureIdentity.Slot) {
+        activeSlot = slot
+        workingAsset = nil
+        isCapturing = true
+    }
+
+    private func signDocument() {
         guard let url = appState.currentPDFURL,
-              let signatureImage = appState.currentSignatureImage else { return }
+              let asset = effectiveAsset,
+              let image = asset.image,
+              let placement = placement else { return }
 
         Task {
             appState.isSigning = true
@@ -328,11 +312,13 @@ struct SignOptionsView: View {
 
             do {
                 let options = SignatureOptions(
-                    signatureImage: signatureImage,
-                    position: appState.signaturePosition,
-                    width: signatureWidth,
-                    height: signatureHeight,
-                    page: appState.signaturePage,
+                    signatureImage: image,
+                    position: .custom,
+                    customX: placement.pdfRect.origin.x,
+                    customY: placement.pdfRect.origin.y,
+                    width: placement.pdfRect.width,
+                    height: placement.pdfRect.height,
+                    page: placement.page,
                     applyToAllPages: applyToAllPages
                 )
 
@@ -347,127 +333,23 @@ struct SignOptionsView: View {
                 )
                 statusMessage = "✓ signed \(result.pagesModified) page(s) → \(result.outputURL.lastPathComponent)"
                 isSuccess = true
+                NSWorkspace.shared.activateFileViewerSelecting([result.outputURL])
             } catch {
-                statusMessage = "✗ error: \(error.localizedDescription)"
+                statusMessage = "✗ \(error.localizedDescription)"
                 isSuccess = false
             }
 
             appState.isSigning = false
         }
     }
+
+    private var accent: Color {
+        colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen
+    }
 }
 
-// MARK: - Signature Canvas
-
-struct SignatureCanvasView: View {
-    @Binding var path: Path
-    @Environment(\.colorScheme) var colorScheme
-    var onComplete: (NSImage) -> Void
-    var onCancel: () -> Void
-
-    @State private var currentPath = Path()
-    @State private var paths: [Path] = []
-
-    var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                Rectangle()
-                    .fill(Color.white)
-                    .border(Color.stonegrey.opacity(0.5), width: 1)
-
-                // Draw all paths
-                ForEach(0..<paths.count, id: \.self) { index in
-                    paths[index]
-                        .stroke(Color.black, lineWidth: 2)
-                }
-
-                // Current path being drawn
-                currentPath
-                    .stroke(Color.black, lineWidth: 2)
-            }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let point = value.location
-                        if currentPath.isEmpty {
-                            currentPath.move(to: point)
-                        } else {
-                            currentPath.addLine(to: point)
-                        }
-                    }
-                    .onEnded { _ in
-                        paths.append(currentPath)
-                        currentPath = Path()
-                    }
-            )
-
-            HStack {
-                Button(action: {
-                    paths = []
-                    currentPath = Path()
-                }) {
-                    Text("[clear]")
-                        .font(SumiTypography.monoSmall)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.stonegrey)
-
-                Spacer()
-
-                Button(action: onCancel) {
-                    Text("[cancel]")
-                        .font(SumiTypography.monoSmall)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.stonegrey)
-
-                Button(action: saveSignature) {
-                    Text("[save]")
-                        .font(SumiTypography.monoSmall)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-            }
-        }
-    }
-
-    private func saveSignature() {
-        // Create an image from the paths
-        let size = NSSize(width: 300, height: 150)
-        let image = NSImage(size: size)
-
-        image.lockFocus()
-
-        // White background
-        NSColor.white.setFill()
-        NSRect(origin: .zero, size: size).fill()
-
-        // Draw paths
-        NSColor.black.setStroke()
-        for path in paths {
-            let bezierPath = NSBezierPath()
-            bezierPath.lineWidth = 2
-
-            path.forEach { element in
-                switch element {
-                case .move(to: let point):
-                    bezierPath.move(to: point)
-                case .line(to: let point):
-                    bezierPath.line(to: point)
-                case .quadCurve(to: let point, control: let control):
-                    bezierPath.curve(to: point, controlPoint1: control, controlPoint2: control)
-                case .curve(to: let point, control1: let c1, control2: let c2):
-                    bezierPath.curve(to: point, controlPoint1: c1, controlPoint2: c2)
-                case .closeSubpath:
-                    bezierPath.close()
-                }
-            }
-
-            bezierPath.stroke()
-        }
-
-        image.unlockFocus()
-
-        onComplete(image)
-    }
+#Preview {
+    SignView()
+        .environmentObject(AppState())
+        .frame(width: 900, height: 700)
 }

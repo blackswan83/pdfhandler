@@ -253,13 +253,12 @@ struct SumiSidebarView: View {
 
     private func commandForTab(_ tab: AppTab) -> String {
         switch tab {
-        case .quickSign: return "./quick-sign"
+        case .sign: return "./sign"
         case .convert: return "./convert"
         case .compress: return "./compress"
         case .merge: return "./merge"
         case .split: return "./split"
         case .rotate: return "./rotate"
-        case .sign: return "./sign"
         case .protect: return "./protect"
         case .watermark: return "./watermark"
         case .batch: return "./batch"
@@ -268,13 +267,12 @@ struct SumiSidebarView: View {
 
     private func descriptionForTab(_ tab: AppTab) -> String {
         switch tab {
-        case .quickSign: return "Type to sign (easy)"
+        case .sign: return "Draw · type · image"
         case .convert: return "PDF → Markdown"
         case .compress: return "Reduce file size"
         case .merge: return "Combine PDFs"
         case .split: return "Split into pages"
         case .rotate: return "Rotate pages"
-        case .sign: return "Draw signature"
         case .protect: return "Password protect"
         case .watermark: return "Add watermark"
         case .batch: return "Batch process"
@@ -290,8 +288,8 @@ struct SumiWorkspaceView: View {
 
     var body: some View {
         HSplitView {
-            // PDF Preview (show for most tabs, hide for merge/quickSign which have their own layout)
-            if appState.selectedTab != .merge && appState.selectedTab != .quickSign {
+            // PDF Preview — hidden for tabs that manage their own layout.
+            if appState.selectedTab != .merge && appState.selectedTab != .sign {
                 SumiPDFPreviewView()
                     .frame(minWidth: 400)
             }
@@ -300,7 +298,7 @@ struct SumiWorkspaceView: View {
             optionsPanelView
                 .frame(
                     minWidth: 300,
-                    maxWidth: (appState.selectedTab == .merge || appState.selectedTab == .quickSign) ? .infinity : 400
+                    maxWidth: (appState.selectedTab == .merge || appState.selectedTab == .sign) ? .infinity : 400
                 )
                 .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
         }
@@ -309,8 +307,8 @@ struct SumiWorkspaceView: View {
     @ViewBuilder
     private var optionsPanelView: some View {
         switch appState.selectedTab {
-        case .quickSign:
-            QuickSignView()
+        case .sign:
+            SignView()
         case .convert:
             ConversionOptionsView()
         case .compress:
@@ -321,8 +319,6 @@ struct SumiWorkspaceView: View {
             SplitOptionsView()
         case .rotate:
             RotateOptionsView()
-        case .sign:
-            SignOptionsView()
         case .protect:
             ProtectOptionsView()
         case .watermark:

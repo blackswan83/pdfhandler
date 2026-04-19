@@ -16,7 +16,7 @@ class AppState: ObservableObject {
     // MARK: - Navigation State
     @Published var showFilePicker = false
     @Published var showSidebar = true
-    @Published var selectedTab: AppTab = .quickSign
+    @Published var selectedTab: AppTab = .sign
 
     // MARK: - PDF State
     @Published var selectedPDFs: [PDFDocument] = []
@@ -59,10 +59,7 @@ class AppState: ObservableObject {
     // MARK: - Signature State
     @Published var signatureProgress: Double = 0
     @Published var isSigning = false
-    @Published var savedSignatures: [SavedSignature] = []
-    @Published var currentSignatureImage: NSImage?
-    @Published var signaturePage: Int = 1
-    @Published var signaturePosition: SignaturePosition = .bottomRight
+    let identityStore = SignatureIdentityStore()
 
     // MARK: - Security State
     @Published var securityProgress: Double = 0
@@ -79,13 +76,6 @@ class AppState: ObservableObject {
     @Published var watermarkOpacity: Double = 0.3
     @Published var watermarkRotation: Double = -45
     @Published var watermarkFontSize: Double = 72
-
-    // MARK: - Quick Sign State
-    @Published var quickSignName: String = ""
-    @Published var quickSignFontStyle: SignatureFontStyle = .elegant
-    @Published var quickSignIncludeDate: Bool = true
-    @Published var quickSignProgress: Double = 0
-    @Published var isQuickSigning = false
 
     // MARK: - Services
     let pdfService = PDFService()
@@ -284,13 +274,12 @@ class AppState: ObservableObject {
 // MARK: - Supporting Types
 
 enum AppTab: String, CaseIterable {
-    case quickSign = "Quick Sign"
+    case sign = "Sign"
     case convert = "Convert"
     case compress = "Compress"
     case merge = "Merge"
     case split = "Split"
     case rotate = "Rotate"
-    case sign = "Sign"
     case protect = "Protect"
     case watermark = "Watermark"
     case batch = "Batch"

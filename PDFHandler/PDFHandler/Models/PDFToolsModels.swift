@@ -153,24 +153,6 @@ struct RotateResult: Identifiable {
 
 // MARK: - Signature Options
 
-struct SavedSignature: Identifiable, Codable {
-    let id: UUID
-    let name: String
-    let imageData: Data
-    let createdAt: Date
-
-    init(id: UUID = UUID(), name: String, imageData: Data, createdAt: Date = Date()) {
-        self.id = id
-        self.name = name
-        self.imageData = imageData
-        self.createdAt = createdAt
-    }
-
-    var image: NSImage? {
-        NSImage(data: imageData)
-    }
-}
-
 enum SignaturePosition: String, CaseIterable, Identifiable {
     case topLeft = "top_left"
     case topCenter = "top_center"
