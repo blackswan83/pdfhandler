@@ -20,14 +20,26 @@ let package = Package(
             name: "PDFHandler",
             dependencies: [],
             path: "PDFHandler",
-            resources: [
-                .process("Resources")
+            // Non-Swift files that SwiftPM should not attempt to process.
+            // The asset catalog is compiled directly by scripts/build-dmg.sh
+            // via actool when real icon PNGs are present; Info.plist and
+            // entitlements are copied into the .app by the build script.
+            exclude: [
+                "Resources/Info.plist",
+                "Resources/PDFHandler.entitlements",
+                "Resources/Assets.xcassets"
+            ],
+            swiftSettings: [
+                // CompressionService.swift uses a bare-slash regex literal
+                // (`/Page\s+(\d+)/`). Xcode enables this by default, but
+                // SwiftPM in Swift 5 language mode requires opting in.
+                .enableUpcomingFeature("BareSlashRegexLiterals")
             ]
         ),
         .testTarget(
             name: "PDFHandlerTests",
             dependencies: ["PDFHandler"],
-            path: "Tests"
+            path: "PDFHandlerTests"
         )
     ]
 )

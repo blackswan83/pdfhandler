@@ -238,45 +238,33 @@ actor CompressionService {
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
-            // Track progress by monitoring output and parsing page numbers
-            var lastProgress = 0.0
-            var pagesProcessed = 0
+            // Track progress across stderr/stdout readability callbacks.
+            // Wrapped in a lock-guarded reference so the @Sendable file-handle
+            // closures capture a reference (safe) instead of mutating local vars.
+            let progress = GhostscriptProgressState()
 
             // Ghostscript outputs "Page X" to stderr when processing
             errorPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                if !data.isEmpty, let output = String(data: data, encoding: .utf8) {
-                    // Parse "Page X" patterns from Ghostscript output
-                    let pagePattern = /Page\s+(\d+)/
-                    if let match = output.firstMatch(of: pagePattern),
-                       let pageNum = Int(match.1) {
-                        pagesProcessed = max(pagesProcessed, pageNum)
-                        // Estimate progress (assume ~50 pages max, adjust dynamically)
-                        let estimatedProgress = min(Double(pagesProcessed) / 50.0, 0.95)
-                        if estimatedProgress > lastProgress {
-                            lastProgress = estimatedProgress
-                            DispatchQueue.main.async {
-                                progressHandler(lastProgress)
-                            }
-                        }
-                    } else {
-                        // Fallback: increment progress slightly for any activity
-                        lastProgress = min(lastProgress + 0.05, 0.95)
-                        DispatchQueue.main.async {
-                            progressHandler(lastProgress)
-                        }
+                guard !data.isEmpty, let output = String(data: data, encoding: .utf8) else { return }
+                let pagePattern = /Page\s+(\d+)/
+                if let match = output.firstMatch(of: pagePattern),
+                   let pageNum = Int(match.1) {
+                    if let updated = progress.recordPage(pageNum) {
+                        DispatchQueue.main.async { progressHandler(updated) }
                     }
+                } else {
+                    let updated = progress.bumpStderr()
+                    DispatchQueue.main.async { progressHandler(updated) }
                 }
             }
 
             // Also monitor stdout for any progress indicators
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
-                if !data.isEmpty && lastProgress < 0.9 {
-                    lastProgress = min(lastProgress + 0.02, 0.9)
-                    DispatchQueue.main.async {
-                        progressHandler(lastProgress)
-                    }
+                guard !data.isEmpty else { return }
+                if let updated = progress.bumpStdout() {
+                    DispatchQueue.main.async { progressHandler(updated) }
                 }
             }
 
@@ -429,5 +417,45 @@ enum CompressionError: LocalizedError {
         case .writeFailed:
             return "Check disk space and file permissions"
         }
+    }
+}
+
+// MARK: - Ghostscript progress state
+
+/// Lock-guarded progress counters shared between the stderr / stdout
+/// readability handlers that Ghostscript's Process delivers on a
+/// background queue. Exposed as `@unchecked Sendable` because all
+/// access is serialized through the internal NSLock.
+private final class GhostscriptProgressState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pagesProcessed: Int = 0
+    private var lastProgress: Double = 0.0
+
+    /// Record a "Page N" marker. Returns the new progress value if it
+    /// advanced, or nil if it did not.
+    func recordPage(_ pageNum: Int) -> Double? {
+        lock.lock(); defer { lock.unlock() }
+        pagesProcessed = max(pagesProcessed, pageNum)
+        let estimated = min(Double(pagesProcessed) / 50.0, 0.95)
+        guard estimated > lastProgress else { return nil }
+        lastProgress = estimated
+        return lastProgress
+    }
+
+    /// Any stderr activity that we could not parse as a page marker.
+    /// Always returns the updated progress.
+    func bumpStderr() -> Double {
+        lock.lock(); defer { lock.unlock() }
+        lastProgress = min(lastProgress + 0.05, 0.95)
+        return lastProgress
+    }
+
+    /// Any stdout activity. Returns nil if we are already past 0.9 and
+    /// stdout activity should not advance progress further.
+    func bumpStdout() -> Double? {
+        lock.lock(); defer { lock.unlock() }
+        guard lastProgress < 0.9 else { return nil }
+        lastProgress = min(lastProgress + 0.02, 0.9)
+        return lastProgress
     }
 }
