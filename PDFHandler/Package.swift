@@ -28,6 +28,12 @@ let package = Package(
                 "Resources/Info.plist",
                 "Resources/PDFHandler.entitlements",
                 "Resources/Assets.xcassets"
+            ],
+            swiftSettings: [
+                // CompressionService.swift uses a bare-slash regex literal
+                // (`/Page\s+(\d+)/`). Xcode enables this by default, but
+                // SwiftPM in Swift 5 language mode requires opting in.
+                .enableUpcomingFeature("BareSlashRegexLiterals")
             ]
         ),
         .testTarget(
