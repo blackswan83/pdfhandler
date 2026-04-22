@@ -248,45 +248,14 @@ struct SignOptionsView: View {
         }
     }
 
-    @ViewBuilder
     private func libraryThumb(_ entry: SavedSignature) -> some View {
-        let isSelected: Bool = {
-            guard let current = appState.currentSignatureImage,
-                  let a = current.pngData(),
-                  let b = entry.image?.pngData() else { return false }
-            return a == b
-        }()
-
         VStack(spacing: 4) {
             ZStack(alignment: .topTrailing) {
                 Button(action: { useSavedSignature(entry) }) {
-                    if let image = entry.image {
-                        Image(nsImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 120, height: 44)
-                            .padding(4)
-                            .background(Color.white)
-                            .cornerRadius(4)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(
-                                        isSelected
-                                            ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                                            : Color.stonegrey.opacity(0.3),
-                                        lineWidth: isSelected ? 2 : 1
-                                    )
-                            )
-                    } else {
-                        Color.gray.opacity(0.2)
-                            .frame(width: 120, height: 44)
-                            .cornerRadius(4)
-                    }
+                    thumbImage(for: entry)
                 }
                 .buttonStyle(.plain)
 
-                // Delete button
                 Button(action: { appState.deleteSignature(entry) }) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(Color.red.opacity(0.8))
@@ -296,26 +265,53 @@ struct SignOptionsView: View {
                 .offset(x: 4, y: -4)
             }
 
-            HStack(spacing: 4) {
-                if entry.isDefault {
-                    Image(systemName: "star.fill")
+            thumbLabel(for: entry)
+        }
+    }
+
+    @ViewBuilder
+    private func thumbImage(for entry: SavedSignature) -> some View {
+        if let image = entry.image {
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 120, height: 44)
+                .padding(4)
+                .background(Color.white)
+                .cornerRadius(4)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.stonegrey.opacity(0.3), lineWidth: 1)
+                )
+        } else {
+            Color.gray.opacity(0.2)
+                .frame(width: 120, height: 44)
+                .cornerRadius(4)
+        }
+    }
+
+    @ViewBuilder
+    private func thumbLabel(for entry: SavedSignature) -> some View {
+        HStack(spacing: 4) {
+            if entry.isDefault {
+                Image(systemName: "star.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(Color.yellow)
+            } else {
+                Button(action: { appState.setDefaultSignature(entry) }) {
+                    Image(systemName: "star")
                         .font(.system(size: 8))
-                        .foregroundStyle(Color.yellow)
-                } else {
-                    Button(action: { appState.setDefaultSignature(entry) }) {
-                        Image(systemName: "star")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Color.stonegrey)
-                    }
-                    .buttonStyle(.plain)
+                        .foregroundStyle(Color.stonegrey)
                 }
-                Text(entry.name)
-                    .font(SumiTypography.monoSmall)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .foregroundStyle(Color.stonegrey)
-                    .frame(maxWidth: 100)
+                .buttonStyle(.plain)
             }
+            Text(entry.name)
+                .font(SumiTypography.monoSmall)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(Color.stonegrey)
+                .frame(maxWidth: 100)
         }
     }
 
@@ -517,25 +513,13 @@ struct SignOptionsView: View {
     // MARK: - Input actions
 
     private var canPaste: Bool {
-        let pb = NSPasteboard.general
-        return pb.canReadObject(forClasses: [NSImage.self], options: nil)
-            || pb.canReadObject(forClasses: [NSURL.self], options: nil)
+        NSImage(pasteboard: NSPasteboard.general) != nil
     }
 
     private func pasteFromClipboard() {
-        let pb = NSPasteboard.general
-        if let images = pb.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage],
-           let image = images.first {
+        if let image = NSImage(pasteboard: NSPasteboard.general) {
             appState.currentSignatureImage = image
             statusMessage = "Pasted signature from clipboard"
-            isSuccess = true
-            return
-        }
-        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
-           let url = urls.first,
-           let image = NSImage(contentsOf: url) {
-            appState.currentSignatureImage = image
-            statusMessage = "Loaded signature from \(url.lastPathComponent)"
             isSuccess = true
             return
         }
