@@ -100,7 +100,7 @@ struct QuickSignView: View {
         return VStack(spacing: 2) {
             Text(appState.quickSignName)
                 .font(.custom(appState.quickSignFontStyle.fontName, size: min(scaledHeight * 0.6, 32)))
-                .foregroundStyle(Color(nsColor: appState.quickSignInkColor.nsColor))
+                .foregroundStyle(Color.black)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
 
@@ -267,39 +267,6 @@ struct QuickSignView: View {
                                 }
                                 .buttonStyle(.plain)
                             }
-                        }
-                    }
-
-                    Divider()
-
-                    // Ink color
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Ink color", systemImage: "drop.fill")
-                            .font(.system(size: 15, weight: .medium, design: .rounded))
-                        HStack(spacing: 10) {
-                            ForEach(SignatureInkColor.allCases) { color in
-                                Button(action: { appState.quickSignInkColor = color }) {
-                                    Circle()
-                                        .fill(Color(nsColor: color.nsColor))
-                                        .frame(width: 24, height: 24)
-                                        .overlay(
-                                            Circle().stroke(
-                                                appState.quickSignInkColor == color
-                                                    ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                                                    : Color.stonegrey.opacity(0.4),
-                                                lineWidth: appState.quickSignInkColor == color ? 2.5 : 1
-                                            )
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                                .help(color.displayName)
-                            }
-                            Spacer()
-                            Text("Need to paste or drop an image? Use the Sign tab.")
-                                .font(.system(size: 11, design: .rounded))
-                                .foregroundStyle(Color.stonegrey)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.trailing)
                         }
                     }
 
@@ -533,7 +500,7 @@ struct QuickSignView: View {
 
         let nameAttributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: appState.quickSignInkColor.nsColor
+            .foregroundColor: NSColor.black
         ]
         let nameSize = (name as NSString).size(withAttributes: nameAttributes)
 

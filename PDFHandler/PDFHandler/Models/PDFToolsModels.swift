@@ -153,84 +153,21 @@ struct RotateResult: Identifiable {
 
 // MARK: - Signature Options
 
-enum SavedSignatureRole: String, Codable, CaseIterable {
-    case signature
-    case initials
-
-    var displayName: String {
-        switch self {
-        case .signature: return "Signature"
-        case .initials: return "Initials"
-        }
-    }
-}
-
-enum SignatureInkColor: String, CaseIterable, Identifiable, Codable {
-    case black
-    case blue
-    case red
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .black: return "Black"
-        case .blue: return "Blue"
-        case .red: return "Red"
-        }
-    }
-
-    var nsColor: NSColor {
-        switch self {
-        case .black: return NSColor.black
-        // Legal-docs blue (slightly deeper than systemBlue for ink feel).
-        case .blue: return NSColor(calibratedRed: 0.07, green: 0.20, blue: 0.55, alpha: 1.0)
-        case .red: return NSColor(calibratedRed: 0.70, green: 0.10, blue: 0.10, alpha: 1.0)
-        }
-    }
-}
-
 struct SavedSignature: Identifiable, Codable {
     let id: UUID
-    var name: String
+    let name: String
     let imageData: Data
     let createdAt: Date
-    var role: SavedSignatureRole
-    var isDefault: Bool
 
-    init(
-        id: UUID = UUID(),
-        name: String,
-        imageData: Data,
-        createdAt: Date = Date(),
-        role: SavedSignatureRole = .signature,
-        isDefault: Bool = false
-    ) {
+    init(id: UUID = UUID(), name: String, imageData: Data, createdAt: Date = Date()) {
         self.id = id
         self.name = name
         self.imageData = imageData
         self.createdAt = createdAt
-        self.role = role
-        self.isDefault = isDefault
     }
 
     var image: NSImage? {
         NSImage(data: imageData)
-    }
-
-    // Backwards-compat decoding: older library files may lack role/isDefault.
-    enum CodingKeys: String, CodingKey {
-        case id, name, imageData, createdAt, role, isDefault
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try c.decode(UUID.self, forKey: .id)
-        self.name = try c.decode(String.self, forKey: .name)
-        self.imageData = try c.decode(Data.self, forKey: .imageData)
-        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
-        self.role = try c.decodeIfPresent(SavedSignatureRole.self, forKey: .role) ?? .signature
-        self.isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
     }
 }
 

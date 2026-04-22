@@ -8,7 +8,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # needed to attach DMG to a release on tag pushes
+  contents: write       # attach DMG to release on v* tags
+  pull-requests: write  # post build log to PR on failure
+  issues: write         # pull-request comments go through the issues API
 
 jobs:
   build:
@@ -25,8 +27,72 @@ jobs:
           swift --version
           xcode-select -p
 
-      - name: Build DMG
-        run: ./scripts/build-dmg.sh
+      - name: Build DMG (capturing log)
+        id: build
+        run: |
+          set -o pipefail
+          mkdir -p build
+          ./scripts/build-dmg.sh 2>&1 | tee build/build.log
+
+      - name: Publish failure log
+        if: failure() && steps.build.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -e
+          LOG=build/build.log
+          [[ -f "$LOG" ]] || { echo "no build.log captured"; exit 0; }
+
+          {
+            echo "### swift build failed"
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo '<details><summary>Last 200 lines of build/build.log</summary>'
+            echo
+            echo '```'
+            tail -n 200 "$LOG"
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ -n "${PR_NUMBER:-}" ]]; then
+            body=$(
+              {
+                echo "swift build failed on commit ${GITHUB_SHA::7}."
+                echo
+                echo "Run: $RUN_URL"
+                echo
+                echo '<details><summary>Last 200 lines of build/build.log</summary>'
+                echo
+                echo '```'
+                tail -n 200 "$LOG"
+                echo '```'
+                echo '</details>'
+              }
+            )
+            # Use a heredoc body to avoid shell quoting pitfalls.
+            jq -n --arg body "$body" '{body: $body}' \
+              | curl -sSL \
+                  -X POST \
+                  -H "Authorization: Bearer $GH_TOKEN" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Content-Type: application/json" \
+                  --data-binary @- \
+                  "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
+                  > /dev/null
+          fi
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build/build.log
+          if-no-files-found: ignore
 
       - name: Locate DMG
         id: locate

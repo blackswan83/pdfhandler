@@ -59,53 +59,10 @@ class AppState: ObservableObject {
     // MARK: - Signature State
     @Published var signatureProgress: Double = 0
     @Published var isSigning = false
+    @Published var savedSignatures: [SavedSignature] = []
     @Published var currentSignatureImage: NSImage?
     @Published var signaturePage: Int = 1
     @Published var signaturePosition: SignaturePosition = .bottomRight
-    @Published var signatureInkColor: SignatureInkColor = .black
-    @Published var signatureRole: SavedSignatureRole = .signature
-    @Published var savedSignatures: [SavedSignature] = []
-
-    private let signatureLibrary = SignatureLibrary()
-
-    func signatures(for role: SavedSignatureRole) -> [SavedSignature] {
-        savedSignatures.filter { $0.role == role }
-    }
-
-    @discardableResult
-    func saveSignature(image: NSImage, name: String, role: SavedSignatureRole) -> SavedSignature? {
-        guard let data = image.pngData() else { return nil }
-        let entry = SavedSignature(
-            name: name.isEmpty ? SavedSignatureNaming.defaultName(for: role) : name,
-            imageData: data,
-            role: role
-        )
-        savedSignatures.insert(entry, at: 0)
-        signatureLibrary.save(savedSignatures)
-        return entry
-    }
-
-    func deleteSignature(_ signature: SavedSignature) {
-        savedSignatures.removeAll { $0.id == signature.id }
-        signatureLibrary.save(savedSignatures)
-    }
-
-    func setDefaultSignature(_ signature: SavedSignature) {
-        savedSignatures = savedSignatures.map { entry in
-            var copy = entry
-            if copy.role == signature.role {
-                copy.isDefault = (copy.id == signature.id)
-            }
-            return copy
-        }
-        signatureLibrary.save(savedSignatures)
-    }
-
-    func renameSignature(_ signature: SavedSignature, to newName: String) {
-        guard let idx = savedSignatures.firstIndex(where: { $0.id == signature.id }) else { return }
-        savedSignatures[idx].name = newName
-        signatureLibrary.save(savedSignatures)
-    }
 
     // MARK: - Security State
     @Published var securityProgress: Double = 0
@@ -129,7 +86,6 @@ class AppState: ObservableObject {
     @Published var quickSignIncludeDate: Bool = true
     @Published var quickSignProgress: Double = 0
     @Published var isQuickSigning = false
-    @Published var quickSignInkColor: SignatureInkColor = .black
 
     // MARK: - Services
     let pdfService = PDFService()
@@ -137,10 +93,6 @@ class AppState: ObservableObject {
     let compressionService = CompressionService()
     let ocrService = OCRService()
     let pdfToolsService = PDFToolsService()
-
-    init() {
-        savedSignatures = signatureLibrary.load()
-    }
 
     // MARK: - Preferences
     @AppStorage("outputDirectory") var outputDirectory: String = ""
