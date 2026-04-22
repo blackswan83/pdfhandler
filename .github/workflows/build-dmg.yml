@@ -1,0 +1,50 @@
+name: Build DMG
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed to attach DMG to a release on tag pushes
+
+jobs:
+  build:
+    name: Build PDFHandler.dmg
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          swift --version
+          xcode-select -p
+
+      - name: Build DMG
+        run: ./scripts/build-dmg.sh
+
+      - name: Locate DMG
+        id: locate
+        run: |
+          dmg="$(ls build/PDFHandler-*.dmg | head -n1)"
+          echo "dmg_path=$dmg" >> "$GITHUB_OUTPUT"
+          echo "dmg_name=$(basename "$dmg")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.locate.outputs.dmg_name }}
+          path: ${{ steps.locate.outputs.dmg_path }}
+          if-no-files-found: error
+
+      - name: Attach DMG to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.locate.outputs.dmg_path }}
+          generate_release_notes: true

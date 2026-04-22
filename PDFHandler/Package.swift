@@ -20,14 +20,19 @@ let package = Package(
             name: "PDFHandler",
             dependencies: [],
             path: "PDFHandler",
+            exclude: [
+                "Resources/Info.plist",
+                "Resources/PDFHandler.entitlements",
+                "Resources/Assets.xcassets/AppIcon.appiconset/generate_icons.sh"
+            ],
             resources: [
-                .process("Resources")
+                .process("Resources/Assets.xcassets")
             ]
         ),
         .testTarget(
             name: "PDFHandlerTests",
             dependencies: ["PDFHandler"],
-            path: "Tests"
+            path: "PDFHandlerTests"
         )
     ]
 )
