@@ -218,7 +218,7 @@ struct SignOptionsView: View {
     // MARK: - Saved signature library
 
     private var librarySection: some View {
-        let entries = appState.savedSignatures(role: appState.signatureRole)
+        let entries = appState.signatures(for: appState.signatureRole)
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("--library")

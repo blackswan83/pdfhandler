@@ -68,7 +68,7 @@ class AppState: ObservableObject {
 
     private let signatureLibrary = SignatureLibrary()
 
-    func savedSignatures(role: SavedSignatureRole) -> [SavedSignature] {
+    func signatures(for role: SavedSignatureRole) -> [SavedSignature] {
         savedSignatures.filter { $0.role == role }
     }
 
