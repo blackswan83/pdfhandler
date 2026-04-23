@@ -2,473 +2,165 @@
 //  ContentView.swift
 //  PDFHandler
 //
-//  Main application view
-//  Design: Terminal precision meets calligraphic craft
+//  Root layout: library sidebar on the left, toolbar + PDF preview on
+//  the right. Wires up the Open / Save keyboard commands and the
+//  "new signature" sheet.
 //
 
 import SwiftUI
-import PDFKit
+import AppKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.colorScheme) var colorScheme
-    @State private var isDragging = false
 
     var body: some View {
         NavigationSplitView {
-            SumiSidebarView()
-                .frame(minWidth: 200)
+            LibrarySidebarView()
         } detail: {
-            ZStack {
-                // Background
-                (colorScheme == .dark ? Color.charcoal : Color.paperBackground)
-                    .ignoresSafeArea()
-
-                if appState.selectedPDFs.isEmpty {
-                    SumiDropZoneView(isDragging: $isDragging)
-                } else {
-                    SumiWorkspaceView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            detail
         }
         .navigationSplitViewStyle(.balanced)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: { appState.showFilePicker = true }) {
-                    Text("[open]")
-                        .font(SumiTypography.mono)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(colorScheme == .dark ? .white : Color.stonegrey)
-                .keyboardShortcut("o", modifiers: .command)
-            }
+        .sheet(isPresented: $appState.isPresentingNewSignature) {
+            NewSignatureView()
+                .environmentObject(appState)
         }
-        .fileImporter(
-            isPresented: $appState.showFilePicker,
-            allowedContentTypes: [.pdf],
-            allowsMultipleSelection: true
-        ) { result in
-            switch result {
-            case .success(let urls):
-                appState.loadPDFs(from: urls)
-            case .failure(let error):
-                print("File selection failed: \(error)")
-            }
+        .onReceive(NotificationCenter.default.publisher(for: .requestOpenPanel)) { _ in
+            openPDF()
         }
-        .onDrop(of: [.pdf, .fileURL], isTargeted: $isDragging) { providers in
-            handleDrop(providers: providers)
-            return true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .openPDFFiles)) { notification in
-            if let urls = notification.userInfo?["urls"] as? [URL] {
-                appState.loadPDFs(from: urls)
-            }
-        }
-        .sheet(isPresented: $appState.showPreview) {
-            SumiMarkdownPreviewSheet()
+        .onReceive(NotificationCenter.default.publisher(for: .requestSaveSigned)) { _ in
+            appState.saveSignedPDF()
         }
     }
 
-    private func handleDrop(providers: [NSItemProvider]) {
-        var urls: [URL] = []
-        let group = DispatchGroup()
+    // MARK: - Detail
 
-        for provider in providers {
-            group.enter()
-
-            if provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.pdf.identifier, options: nil) { item, _ in
-                    defer { group.leave() }
-                    if let url = item as? URL {
-                        urls.append(url)
-                    }
-                }
-            } else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                    defer { group.leave() }
-                    if let data = item as? Data,
-                       let path = String(data: data, encoding: .utf8),
-                       let url = URL(string: path),
-                       url.pathExtension.lowercased() == "pdf" {
-                        urls.append(url)
-                    }
-                }
-            } else {
-                group.leave()
-            }
-        }
-
-        group.notify(queue: .main) {
-            if !urls.isEmpty {
-                appState.loadPDFs(from: urls)
+    private var detail: some View {
+        VStack(spacing: 0) {
+            toolbar
+            Divider()
+            PDFPreviewView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onDrop(of: [.pdf, .fileURL], isTargeted: nil, perform: handleDrop)
+            if let message = appState.errorMessage {
+                banner(message: message, style: .error)
+            } else if let saved = appState.lastSavedURL {
+                banner(message: "Saved to \(saved.lastPathComponent)", style: .info)
             }
         }
     }
-}
 
-// MARK: - Sumi Drop Zone
+    // MARK: - Toolbar
 
-struct SumiDropZoneView: View {
-    @Binding var isDragging: Bool
-    @EnvironmentObject var appState: AppState
-    @Environment(\.colorScheme) var colorScheme
-
-    var body: some View {
-        ZStack {
-            // Calligraphic watermark - visible when no file loaded
-            EnsoMark(opacity: 0.08, size: 300)
-                .opacity(isDragging ? 0 : 1)
-                .animation(.easeOut(duration: 0.3), value: isDragging)
-
-            // Drop zone
-            VStack(spacing: 0) {
-                Spacer()
-
-                // Command prompt style
-                HStack(spacing: 4) {
-                    Text("drop")
-                        .font(SumiTypography.command)
-                        .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-
-                    Text(".pdf")
-                        .font(SumiTypography.command)
-                        .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-
-                    CursorBlinkView(color: colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                        .opacity(isDragging ? 0 : 1)
-                }
-
-                Spacer()
+    private var toolbar: some View {
+        HStack(spacing: 12) {
+            Button {
+                openPDF()
+            } label: {
+                Label("Open PDF", systemImage: "folder")
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background {
-                RoundedRectangle(cornerRadius: 2)
-                    .strokeBorder(
-                        isDragging
-                            ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                            : (colorScheme == .dark ? Color(hex: "3A3A3C") : Color.mist),
-                        style: StrokeStyle(lineWidth: 1, dash: isDragging ? [] : [8, 4])
-                    )
-                    .padding(60)
+
+            if let url = appState.documentURL {
+                Text(url.lastPathComponent)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                appState.showFilePicker = true
+
+            Spacer()
+
+            pagePicker
+
+            Button {
+                appState.saveSignedPDF()
+            } label: {
+                Label("Save signed PDF", systemImage: "square.and.arrow.down")
             }
+            .keyboardShortcut("s", modifiers: .command)
+            .disabled(appState.document == nil || appState.placements.isEmpty)
         }
-        .animation(.easeInOut(duration: 0.2), value: isDragging)
-    }
-}
-
-// MARK: - Sumi Sidebar
-
-struct SumiSidebarView: View {
-    @EnvironmentObject var appState: AppState
-    @Environment(\.colorScheme) var colorScheme
-
-    var body: some View {
-        List(selection: $appState.selectedTab) {
-            Section {
-                ForEach(AppTab.allCases, id: \.self) { tab in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(commandForTab(tab))
-                            .font(SumiTypography.mono)
-                            .foregroundStyle(
-                                appState.selectedTab == tab
-                                    ? (colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-                                    : (colorScheme == .dark ? .white : Color.inkBlack)
-                            )
-                        Text(descriptionForTab(tab))
-                            .font(SumiTypography.monoSmall)
-                            .foregroundStyle(Color.stonegrey)
-                            .lineLimit(2)
-                    }
-                    .padding(.vertical, 4)
-                    .tag(tab)
-                }
-            } header: {
-                Text("commands")
-                    .font(SumiTypography.monoSmall)
-                    .foregroundStyle(Color.stonegrey)
-            }
-
-            if !appState.selectedPDFURLs.isEmpty {
-                Section {
-                    ForEach(Array(appState.selectedPDFURLs.enumerated()), id: \.element) { index, url in
-                        HStack(spacing: 8) {
-                            Text("→")
-                                .font(SumiTypography.mono)
-                                .foregroundStyle(Color.stonegrey)
-
-                            Text(url.lastPathComponent)
-                                .font(SumiTypography.mono)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        .tag(index)
-                        .onTapGesture {
-                            Task { @MainActor in
-                                appState.currentPDFIndex = index
-                            }
-                        }
-                    }
-                } header: {
-                    Text("open")
-                        .font(SumiTypography.monoSmall)
-                        .foregroundStyle(Color.stonegrey)
-                }
-            }
-
-            if !appState.conversionResults.isEmpty {
-                Section {
-                    ForEach(appState.conversionResults.suffix(5)) { result in
-                        HStack(spacing: 8) {
-                            Text("✓")
-                                .font(SumiTypography.mono)
-                                .foregroundStyle(colorScheme == .dark ? Color.phosphorGreen : Color.terminalGreen)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(result.outputURL.lastPathComponent)
-                                    .font(SumiTypography.monoSmall)
-                                    .lineLimit(1)
-
-                                Text("\(result.processingTime, specifier: "%.1f")s")
-                                    .font(SumiTypography.monoSmall)
-                                    .foregroundStyle(Color.stonegrey)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("history")
-                        .font(SumiTypography.monoSmall)
-                        .foregroundStyle(Color.stonegrey)
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .navigationTitle("sumi")
-    }
-
-    private func commandForTab(_ tab: AppTab) -> String {
-        switch tab {
-        case .quickSign: return "./quick-sign"
-        case .convert: return "./convert"
-        case .compress: return "./compress"
-        case .merge: return "./merge"
-        case .split: return "./split"
-        case .rotate: return "./rotate"
-        case .sign: return "./sign"
-        case .protect: return "./protect"
-        case .watermark: return "./watermark"
-        case .batch: return "./batch"
-        }
-    }
-
-    private func descriptionForTab(_ tab: AppTab) -> String {
-        switch tab {
-        case .quickSign: return "Type to sign (easy)"
-        case .convert: return "PDF → Markdown"
-        case .compress: return "Reduce file size"
-        case .merge: return "Combine PDFs"
-        case .split: return "Split into pages"
-        case .rotate: return "Rotate pages"
-        case .sign: return "Draw signature"
-        case .protect: return "Password protect"
-        case .watermark: return "Add watermark"
-        case .batch: return "Batch process"
-        }
-    }
-}
-
-// MARK: - Sumi Workspace
-
-struct SumiWorkspaceView: View {
-    @EnvironmentObject var appState: AppState
-    @Environment(\.colorScheme) var colorScheme
-
-    var body: some View {
-        HSplitView {
-            // PDF Preview (show for most tabs, hide for merge/quickSign which have their own layout)
-            if appState.selectedTab != .merge && appState.selectedTab != .quickSign {
-                SumiPDFPreviewView()
-                    .frame(minWidth: 400)
-            }
-
-            // Options Panel
-            optionsPanelView
-                .frame(
-                    minWidth: 300,
-                    maxWidth: (appState.selectedTab == .merge || appState.selectedTab == .quickSign) ? .infinity : 400
-                )
-                .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
-        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     @ViewBuilder
-    private var optionsPanelView: some View {
-        switch appState.selectedTab {
-        case .quickSign:
-            QuickSignView()
-        case .convert:
-            ConversionOptionsView()
-        case .compress:
-            CompressionOptionsView()
-        case .merge:
-            MergeOptionsView()
-        case .split:
-            SplitOptionsView()
-        case .rotate:
-            RotateOptionsView()
-        case .sign:
-            SignOptionsView()
-        case .protect:
-            ProtectOptionsView()
-        case .watermark:
-            WatermarkOptionsView()
-        case .batch:
-            BatchProcessingView()
+    private var pagePicker: some View {
+        if let pdf = appState.document, pdf.pageCount > 1 {
+            HStack(spacing: 6) {
+                Button {
+                    appState.currentPageIndex = max(0, appState.currentPageIndex - 1)
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .disabled(appState.currentPageIndex <= 0)
+                .buttonStyle(.borderless)
+
+                Text("Page \(appState.currentPageIndex + 1) of \(pdf.pageCount)")
+                    .font(.subheadline.monospacedDigit())
+                    .frame(minWidth: 120)
+
+                Button {
+                    appState.currentPageIndex = min(pdf.pageCount - 1, appState.currentPageIndex + 1)
+                } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .disabled(appState.currentPageIndex >= pdf.pageCount - 1)
+                .buttonStyle(.borderless)
+            }
         }
     }
-}
 
-// MARK: - Sumi PDF Preview
+    // MARK: - Banner
 
-struct SumiPDFPreviewView: View {
-    @EnvironmentObject var appState: AppState
-    @Environment(\.colorScheme) var colorScheme
+    private enum BannerStyle { case info, error }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header - monospace file info
-            HStack {
-                if let url = appState.currentPDFURL {
-                    Text(url.lastPathComponent)
-                        .font(SumiTypography.mono)
-                        .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-                        .lineLimit(1)
+    @ViewBuilder
+    private func banner(message: String, style: BannerStyle) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: style == .error ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(style == .error ? Color.red : Color.green)
+            Text(message)
+                .font(.callout)
+            Spacer()
+            Button("Dismiss") {
+                appState.errorMessage = nil
+                appState.lastSavedURL = nil
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(10)
+        .background(Color(nsColor: .underPageBackgroundColor))
+    }
 
-                    Spacer()
+    // MARK: - Actions
 
-                    if let pdf = appState.currentPDF {
-                        Text("\(pdf.pageCount)p")
-                            .font(SumiTypography.monoSmall)
-                            .foregroundStyle(Color.stonegrey)
+    private func openPDF() {
+        let panel = NSOpenPanel()
+        panel.title = "Open PDF"
+        panel.allowedContentTypes = [.pdf]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            appState.openDocument(at: url)
+        }
+    }
 
-                        if let size = fileSize(for: url) {
-                            Text("·")
-                                .foregroundStyle(Color.stonegrey)
-                            Text(size)
-                                .font(SumiTypography.monoSmall)
-                                .foregroundStyle(Color.stonegrey)
-                        }
+    private func handleDrop(providers: [NSItemProvider]) -> Bool {
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
+                    guard let data = data as? Data,
+                          let url = URL(dataRepresentation: data, relativeTo: nil),
+                          url.pathExtension.lowercased() == "pdf"
+                    else { return }
+                    Task { @MainActor in
+                        appState.openDocument(at: url)
                     }
                 }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
-
-            Rectangle()
-                .fill(colorScheme == .dark ? Color(hex: "3A3A3C") : Color.mist)
-                .frame(height: 1)
-
-            // PDF View
-            if let pdf = appState.currentPDF {
-                PDFKitView(document: pdf)
-            } else {
-                VStack {
-                    Text("no file")
-                        .font(SumiTypography.mono)
-                        .foregroundStyle(Color.stonegrey)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                return true
             }
         }
-        .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
+        return false
     }
-
-    private func fileSize(for url: URL) -> String? {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = attributes[.size] as? Int64 else {
-            return nil
-        }
-        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
-    }
-}
-
-// MARK: - PDFKit SwiftUI Wrapper
-
-struct PDFKitView: NSViewRepresentable {
-    let document: PDFDocument
-
-    func makeNSView(context: Context) -> PDFView {
-        let pdfView = PDFView()
-        pdfView.autoScales = true
-        pdfView.displayMode = .singlePageContinuous
-        pdfView.displayDirection = .vertical
-        pdfView.backgroundColor = .clear
-        return pdfView
-    }
-
-    func updateNSView(_ pdfView: PDFView, context: Context) {
-        pdfView.document = document
-    }
-}
-
-// MARK: - Sumi Markdown Preview Sheet
-
-struct SumiMarkdownPreviewSheet: View {
-    @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) var dismiss
-    @Environment(\.colorScheme) var colorScheme
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Text("output.md")
-                    .font(SumiTypography.mono)
-                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-
-                Spacer()
-
-                Button("copy") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(appState.previewMarkdown, forType: .string)
-                }
-                .buttonStyle(SumiTextButtonStyle())
-
-                Button("done") {
-                    dismiss()
-                }
-                .buttonStyle(SumiTextButtonStyle(accent: true))
-                .keyboardShortcut(.defaultAction)
-            }
-            .padding()
-            .background(colorScheme == .dark ? Color.sumiGrey : Color.surface)
-
-            Rectangle()
-                .fill(colorScheme == .dark ? Color(hex: "3A3A3C") : Color.mist)
-                .frame(height: 1)
-
-            // Content
-            ScrollView {
-                Text(appState.previewMarkdown)
-                    .font(SumiTypography.mono)
-                    .foregroundStyle(colorScheme == .dark ? .white : Color.inkBlack)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding()
-            }
-            .background(colorScheme == .dark ? Color.charcoal : Color.paperBackground)
-        }
-        .frame(minWidth: 600, minHeight: 400)
-    }
-}
-
-#Preview {
-    ContentView()
-        .environmentObject(AppState())
 }
