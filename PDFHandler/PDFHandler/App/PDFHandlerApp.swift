@@ -2,88 +2,41 @@
 //  PDFHandlerApp.swift
 //  PDFHandler
 //
-//  A native Mac application for converting PDFs to Markdown
-//  and compressing PDF files with precise size targeting.
+//  Single-window macOS app for signing PDFs with a persistent
+//  signature library and DocuSign-style drag/resize placements.
 //
 
 import SwiftUI
 
 @main
 struct PDFHandlerApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("PDF Handler") {
             ContentView()
                 .environmentObject(appState)
                 .frame(minWidth: 900, minHeight: 600)
         }
-        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("Open PDF...") {
-                    appState.showFilePicker = true
+                Button("Open PDF…") {
+                    NotificationCenter.default.post(name: .requestOpenPanel, object: nil)
                 }
                 .keyboardShortcut("o", modifiers: .command)
-
-                Divider()
-
-                Button("Convert to Markdown") {
-                    appState.convertCurrentPDF()
-                }
-                .keyboardShortcut("m", modifiers: [.command, .shift])
-                .disabled(appState.selectedPDFs.isEmpty)
-
-                Button("Compress PDF") {
-                    appState.compressCurrentPDF()
-                }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
-                .disabled(appState.selectedPDFs.isEmpty)
             }
-
-            CommandGroup(after: .sidebar) {
-                Button("Toggle Sidebar") {
-                    appState.showSidebar.toggle()
+            CommandGroup(after: .saveItem) {
+                Button("Save Signed PDF…") {
+                    NotificationCenter.default.post(name: .requestSaveSigned, object: nil)
                 }
-                .keyboardShortcut("s", modifiers: [.command, .control])
+                .keyboardShortcut("s", modifiers: .command)
             }
         }
-
-        Settings {
-            PreferencesView()
-                .environmentObject(appState)
-        }
-
-        MenuBarExtra("PDF Handler", systemImage: "doc.richtext") {
-            MenuBarView()
-                .environmentObject(appState)
-        }
-        .menuBarExtraStyle(.window)
-    }
-}
-
-class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        // Register for Services menu
-        NSApp.servicesProvider = ServiceProvider.shared
-        NSUpdateDynamicServices()
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return false // Keep running for menu bar
-    }
-
-    func application(_ application: NSApplication, open urls: [URL]) {
-        // Handle files opened via Finder or context menu
-        NotificationCenter.default.post(
-            name: .openPDFFiles,
-            object: nil,
-            userInfo: ["urls": urls]
-        )
     }
 }
 
 extension Notification.Name {
-    static let openPDFFiles = Notification.Name("openPDFFiles")
+    static let requestOpenPanel  = Notification.Name("pdfhandler.requestOpenPanel")
+    static let requestSaveSigned = Notification.Name("pdfhandler.requestSaveSigned")
 }

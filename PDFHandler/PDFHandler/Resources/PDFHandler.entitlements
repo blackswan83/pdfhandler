@@ -2,20 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Disable App Sandbox to allow Ghostscript execution -->
+    <!-- Sandbox is off: the app reads/writes PDFs anywhere the user
+         chooses. An ad-hoc signed local-only build does not benefit
+         from sandbox containment. Turn it on and add
+         com.apple.security.files.user-selected.read-write if you
+         ever distribute this through the Mac App Store. -->
     <key>com.apple.security.app-sandbox</key>
     <false/>
-
-    <!-- Allow file access -->
-    <key>com.apple.security.files.user-selected.read-write</key>
-    <true/>
-
-    <!-- Printing -->
-    <key>com.apple.security.print</key>
-    <true/>
-
-    <!-- Automation -->
-    <key>com.apple.security.automation.apple-events</key>
-    <true/>
 </dict>
 </plist>

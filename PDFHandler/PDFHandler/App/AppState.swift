@@ -2,302 +2,180 @@
 //  AppState.swift
 //  PDFHandler
 //
-//  Global application state management
+//  Central observable state: the currently open PDF, the persistent
+//  signature library, the signature the user is placing, and the
+//  placements they have dropped onto pages.
 //
 
+import Foundation
 import SwiftUI
-import Combine
 import PDFKit
 import AppKit
-import UniformTypeIdentifiers
 
 @MainActor
-class AppState: ObservableObject {
-    // MARK: - Navigation State
-    @Published var showFilePicker = false
-    @Published var showSidebar = true
-    @Published var selectedTab: AppTab = .quickSign
+final class AppState: ObservableObject {
 
-    // MARK: - PDF State
-    @Published var selectedPDFs: [PDFDocument] = []
-    @Published var selectedPDFURLs: [URL] = []
-    @Published var currentPDFIndex: Int = 0
+    // MARK: - Document
 
-    // MARK: - Conversion State
-    @Published var conversionProgress: Double = 0
-    @Published var isConverting = false
-    @Published var conversionResults: [ConversionResult] = []
+    @Published var documentURL: URL?
+    @Published var document: PDFDocument?
+    @Published var currentPageIndex: Int = 0
 
-    // MARK: - Compression State
-    @Published var compressionProgress: Double = 0
-    @Published var isCompressing = false
-    @Published var compressionResults: [CompressionResult] = []
-    @Published var targetCompressionRatio: Double = 0.5 // 50% of original
+    // MARK: - Signature library
 
-    // MARK: - Preview State
-    @Published var showPreview = false
-    @Published var previewMarkdown: String = ""
+    @Published private(set) var signatures: [SavedSignature] = []
 
-    // MARK: - Merge State
-    @Published var mergeProgress: Double = 0
-    @Published var isMerging = false
-    @Published var pdfFilesToMerge: [URL] = []
+    /// The signature the user currently has "picked up" from the library.
+    /// Clicking on the PDF preview drops a placement using this signature.
+    @Published var activeSignatureID: UUID?
 
-    // MARK: - Split State
-    @Published var splitProgress: Double = 0
-    @Published var isSplitting = false
-    @Published var splitMode: SplitMode = .allPages
-    @Published var splitPageRanges: String = ""
+    // MARK: - Placements (signatures dropped on pages)
 
-    // MARK: - Rotate State
-    @Published var rotateProgress: Double = 0
-    @Published var isRotating = false
-    @Published var rotationAngle: Int = 90
-    @Published var rotateAllPages = true
-    @Published var rotatePagesToRotate: String = ""
+    @Published var placements: [SignaturePlacement] = []
 
-    // MARK: - Signature State
-    @Published var signatureProgress: Double = 0
-    @Published var isSigning = false
-    @Published var savedSignatures: [SavedSignature] = []
-    @Published var currentSignatureImage: NSImage?
-    @Published var signaturePage: Int = 1
-    @Published var signaturePosition: SignaturePosition = .bottomRight
+    @Published var isPresentingNewSignature = false
 
-    // MARK: - Security State
-    @Published var securityProgress: Double = 0
-    @Published var isApplyingSecurity = false
-    @Published var ownerPassword: String = ""
-    @Published var userPassword: String = ""
-    @Published var allowPrinting = true
-    @Published var allowCopying = false
+    // MARK: - Save result
 
-    // MARK: - Watermark State
-    @Published var watermarkProgress: Double = 0
-    @Published var isApplyingWatermark = false
-    @Published var watermarkText: String = "CONFIDENTIAL"
-    @Published var watermarkOpacity: Double = 0.3
-    @Published var watermarkRotation: Double = -45
-    @Published var watermarkFontSize: Double = 72
-
-    // MARK: - Quick Sign State
-    @Published var quickSignName: String = ""
-    @Published var quickSignFontStyle: SignatureFontStyle = .elegant
-    @Published var quickSignIncludeDate: Bool = true
-    @Published var quickSignProgress: Double = 0
-    @Published var isQuickSigning = false
+    @Published var lastSavedURL: URL?
+    @Published var errorMessage: String?
 
     // MARK: - Services
-    let pdfService = PDFService()
-    let markdownConverter = MarkdownConverter()
-    let compressionService = CompressionService()
-    let ocrService = OCRService()
-    let pdfToolsService = PDFToolsService()
 
-    // MARK: - Preferences
-    @AppStorage("outputDirectory") var outputDirectory: String = ""
-    @AppStorage("includeYAMLFrontmatter") var includeYAMLFrontmatter = true
-    @AppStorage("imageOutputFormat") var imageOutputFormat: String = "png"
-    @AppStorage("defaultCompressionPreset") var defaultCompressionPreset: String = "ebook"
+    private let library = SignatureLibrary()
+    private let signer = PDFSigner()
 
-    var currentPDF: PDFDocument? {
-        guard !selectedPDFs.isEmpty, currentPDFIndex < selectedPDFs.count else { return nil }
-        return selectedPDFs[currentPDFIndex]
+    init() {
+        signatures = library.load()
+        activeSignatureID = signatures.first?.id
     }
 
-    var currentPDFURL: URL? {
-        guard !selectedPDFURLs.isEmpty, currentPDFIndex < selectedPDFURLs.count else { return nil }
-        return selectedPDFURLs[currentPDFIndex]
+    // MARK: - Document loading
+
+    func openDocument(at url: URL) {
+        guard let pdf = PDFDocument(url: url) else {
+            errorMessage = "Could not open \(url.lastPathComponent)."
+            return
+        }
+        documentURL = url
+        document = pdf
+        currentPageIndex = 0
+        placements.removeAll()
+        lastSavedURL = nil
+        errorMessage = nil
     }
 
-    // MARK: - Actions
+    // MARK: - Signature library
 
-    func loadPDFs(from urls: [URL]) {
-        Task { @MainActor in
-            selectedPDFURLs = urls
-            selectedPDFs = urls.compactMap { url in
-                PDFDocument(url: url)
-            }
-            currentPDFIndex = 0
+    func addSignature(image: NSImage, name: String) {
+        guard let data = image.pngData() else {
+            errorMessage = "Could not encode signature image."
+            return
+        }
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let entry = SavedSignature(
+            name: cleanName.isEmpty ? defaultSignatureName() : cleanName,
+            imageData: data
+        )
+        signatures.insert(entry, at: 0)
+        library.save(signatures)
+        if activeSignatureID == nil {
+            activeSignatureID = entry.id
         }
     }
 
-    /// Show save panel and return selected URL
-    private func showSavePanel(
-        suggestedName: String,
-        allowedTypes: [String],
-        title: String
-    ) async -> URL? {
-        await withCheckedContinuation { continuation in
-            let panel = NSSavePanel()
-            panel.title = title
-            panel.nameFieldStringValue = suggestedName
-            panel.canCreateDirectories = true
-
-            var contentTypes: [UTType] = []
-            for ext in allowedTypes {
-                if ext == "md" {
-                    if let mdType = UTType(filenameExtension: "md") {
-                        contentTypes.append(mdType)
-                    }
-                } else if ext == "pdf" {
-                    contentTypes.append(.pdf)
-                }
-            }
-            panel.allowedContentTypes = contentTypes
-
-            panel.begin { response in
-                if response == .OK {
-                    continuation.resume(returning: panel.url)
-                } else {
-                    continuation.resume(returning: nil)
-                }
-            }
+    func deleteSignature(id: UUID) {
+        signatures.removeAll { $0.id == id }
+        placements.removeAll { $0.signatureID == id }
+        library.save(signatures)
+        if activeSignatureID == id {
+            activeSignatureID = signatures.first?.id
         }
     }
 
-    func convertCurrentPDF() {
-        guard let pdf = currentPDF, let url = currentPDFURL else { return }
+    func renameSignature(id: UUID, to newName: String) {
+        guard let idx = signatures.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        signatures[idx].name = trimmed.isEmpty ? defaultSignatureName() : trimmed
+        library.save(signatures)
+    }
 
-        let baseName = url.deletingPathExtension().lastPathComponent
+    func signature(id: UUID) -> SavedSignature? {
+        signatures.first(where: { $0.id == id })
+    }
 
-        Task {
-            // Show save dialog
-            guard let outputURL = await showSavePanel(
-                suggestedName: "\(baseName).md",
-                allowedTypes: ["md"],
-                title: "Save Markdown As"
-            ) else {
-                return // User cancelled
-            }
+    // MARK: - Placements
 
-            isConverting = true
-            conversionProgress = 0
+    func addPlacement(at normalizedPoint: CGPoint, pageIndex: Int) {
+        guard let signatureID = activeSignatureID,
+              signatures.contains(where: { $0.id == signatureID }) else { return }
 
-            do {
-                let result = try await markdownConverter.convert(
-                    pdf: pdf,
-                    sourceURL: url,
-                    options: ConversionOptions(
-                        includeYAMLFrontmatter: includeYAMLFrontmatter,
-                        imageOutputFormat: ImageFormat(rawValue: imageOutputFormat) ?? .png,
-                        outputDirectory: outputURL.deletingLastPathComponent(),
-                        customOutputName: outputURL.deletingPathExtension().lastPathComponent
-                    ),
-                    progressHandler: { [weak self] progress in
-                        Task { @MainActor in
-                            self?.conversionProgress = progress
-                        }
-                    }
-                )
-                conversionResults.append(result)
-                previewMarkdown = result.markdown
-                showPreview = true
-            } catch {
-                print("Conversion failed: \(error)")
-            }
+        // Default size: ~20% of page width, aspect from the saved image.
+        let width: CGFloat = 0.25
+        let aspect = aspectRatio(forSignatureID: signatureID)
+        let height = width / aspect
 
-            isConverting = false
-            conversionProgress = 1.0
+        // Center the placement on the clicked point, clamped to page.
+        let halfW = width / 2
+        let halfH = height / 2
+        let x = min(max(normalizedPoint.x - halfW, 0), 1 - width)
+        let y = min(max(normalizedPoint.y - halfH, 0), 1 - height)
+
+        let placement = SignaturePlacement(
+            signatureID: signatureID,
+            pageIndex: pageIndex,
+            normalizedRect: CGRect(x: x, y: y, width: width, height: height)
+        )
+        placements.append(placement)
+    }
+
+    func updatePlacement(id: UUID, normalizedRect: CGRect) {
+        guard let idx = placements.firstIndex(where: { $0.id == id }) else { return }
+        placements[idx].normalizedRect = normalizedRect
+    }
+
+    func removePlacement(id: UUID) {
+        placements.removeAll { $0.id == id }
+    }
+
+    func placements(onPage pageIndex: Int) -> [SignaturePlacement] {
+        placements.filter { $0.pageIndex == pageIndex }
+    }
+
+    // MARK: - Save
+
+    func saveSignedPDF() {
+        guard let source = documentURL else {
+            errorMessage = "No document open."
+            return
+        }
+        do {
+            let output = try signer.sign(
+                source: source,
+                placements: placements,
+                signatures: signatures
+            )
+            lastSavedURL = output
+            errorMessage = nil
+            NSWorkspace.shared.activateFileViewerSelecting([output])
+        } catch {
+            errorMessage = error.localizedDescription
+            lastSavedURL = nil
         }
     }
 
-    func compressCurrentPDF() {
-        guard let url = currentPDFURL else { return }
+    // MARK: - Helpers
 
-        let baseName = url.deletingPathExtension().lastPathComponent
-
-        Task {
-            // Show save dialog
-            guard let outputURL = await showSavePanel(
-                suggestedName: "\(baseName)_compressed.pdf",
-                allowedTypes: ["pdf"],
-                title: "Save Compressed PDF As"
-            ) else {
-                return // User cancelled
-            }
-
-            isCompressing = true
-            compressionProgress = 0
-
-            do {
-                let options = CompressionOptions(
-                    preset: GhostscriptPreset.forRatio(targetCompressionRatio),
-                    targetRatio: targetCompressionRatio,
-                    outputDirectory: outputURL.deletingLastPathComponent(),
-                    customOutputName: outputURL.deletingPathExtension().lastPathComponent
-                )
-
-                let result = try await compressionService.compress(
-                    pdfURL: url,
-                    targetRatio: targetCompressionRatio,
-                    options: options,
-                    progressHandler: { [weak self] progress in
-                        Task { @MainActor in
-                            self?.compressionProgress = progress
-                        }
-                    }
-                )
-                compressionResults.append(result)
-            } catch {
-                print("Compression failed: \(error)")
-            }
-
-            isCompressing = false
-            compressionProgress = 1.0
-        }
+    private func aspectRatio(forSignatureID id: UUID) -> CGFloat {
+        guard let image = signature(id: id)?.image else { return 3.0 }
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return 3.0 }
+        return size.width / size.height
     }
 
-    func convertAllPDFs() {
-        Task {
-            isConverting = true
-
-            for (index, pdf) in selectedPDFs.enumerated() {
-                currentPDFIndex = index
-                conversionProgress = Double(index) / Double(selectedPDFs.count)
-
-                guard let url = selectedPDFURLs[safe: index] else { continue }
-
-                do {
-                    let result = try await markdownConverter.convert(
-                        pdf: pdf,
-                        sourceURL: url,
-                        options: ConversionOptions(
-                            includeYAMLFrontmatter: includeYAMLFrontmatter,
-                            imageOutputFormat: ImageFormat(rawValue: imageOutputFormat) ?? .png,
-                            outputDirectory: outputDirectory.isEmpty ? nil : URL(fileURLWithPath: outputDirectory)
-                        ),
-                        progressHandler: { _ in }
-                    )
-                    conversionResults.append(result)
-                } catch {
-                    print("Conversion failed for \(url.lastPathComponent): \(error)")
-                }
-            }
-
-            isConverting = false
-            conversionProgress = 1.0
-        }
-    }
-}
-
-// MARK: - Supporting Types
-
-enum AppTab: String, CaseIterable {
-    case quickSign = "Quick Sign"
-    case convert = "Convert"
-    case compress = "Compress"
-    case merge = "Merge"
-    case split = "Split"
-    case rotate = "Rotate"
-    case sign = "Sign"
-    case protect = "Protect"
-    case watermark = "Watermark"
-    case batch = "Batch"
-}
-
-extension Collection {
-    subscript(safe index: Index) -> Element? {
-        return indices.contains(index) ? self[index] : nil
+    private func defaultSignatureName() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return "Signature \(formatter.string(from: Date()))"
     }
 }
