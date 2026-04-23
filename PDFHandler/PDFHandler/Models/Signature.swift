@@ -31,7 +31,10 @@ struct SavedSignature: Identifiable, Codable, Hashable {
 /// Coordinates are normalized 0…1 against the page's mediaBox so the
 /// same placement renders correctly at any preview size and maps
 /// cleanly to PDF coordinates at export time.
-struct SignaturePlacement: Identifiable, Hashable {
+///
+/// Note: intentionally not Hashable — CGRect is not Hashable on
+/// macOS 13, and Identifiable is all SwiftUI needs here.
+struct SignaturePlacement: Identifiable {
     let id: UUID
     let signatureID: UUID
     var pageIndex: Int        // 0-based
