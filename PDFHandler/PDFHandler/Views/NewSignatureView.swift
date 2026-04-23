@@ -2,8 +2,9 @@
 //  NewSignatureView.swift
 //  PDFHandler
 //
-//  Modal sheet that lets the user create a new signature. Four input
-//  methods, DocuSign-style: Type / Draw / Import / Paste.
+//  Modal sheet for creating a new library entry. Four input methods
+//  (Type / Draw / Import / Paste) and a role toggle (Signature vs
+//  Initials) chosen by the sidebar before opening this sheet.
 //
 
 import SwiftUI
@@ -14,7 +15,7 @@ struct NewSignatureView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
-    enum Mode: String, CaseIterable, Identifiable {
+    enum InputMode: String, CaseIterable, Identifiable {
         case type, draw, upload, paste
         var id: String { rawValue }
         var label: String {
@@ -35,20 +36,21 @@ struct NewSignatureView: View {
         }
     }
 
-    @State private var mode: Mode = .type
+    @State private var inputMode: InputMode = .type
     @State private var name: String = ""
     @State private var typedText: String = ""
     @State private var typedFont: TypedFont = .elegant
     @State private var candidateImage: NSImage?
     @State private var statusMessage: String?
+    @State private var showCanvas = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("New signature")
+            Text("New \(appState.newSignatureRole.displayName.lowercased())")
                 .font(.title2.bold())
 
-            Picker("", selection: $mode) {
-                ForEach(Mode.allCases) { m in
+            Picker("", selection: $inputMode) {
+                ForEach(InputMode.allCases) { m in
                     Label(m.label, systemImage: m.systemImage).tag(m)
                 }
             }
@@ -58,7 +60,7 @@ struct NewSignatureView: View {
             Divider()
 
             Group {
-                switch mode {
+                switch inputMode {
                 case .type:   typeEditor
                 case .draw:   drawEditor
                 case .upload: uploadEditor
@@ -83,7 +85,7 @@ struct NewSignatureView: View {
                                 .stroke(Color.gray.opacity(0.4), lineWidth: 1)
                         )
                 } else {
-                    Text("No signature yet.")
+                    Text("No \(appState.newSignatureRole.displayName.lowercased()) yet.")
                         .foregroundStyle(.secondary)
                         .frame(width: 180, alignment: .leading)
                 }
@@ -115,11 +117,12 @@ struct NewSignatureView: View {
         .onChange(of: typedFont) { _ in renderTyped() }
     }
 
-    // MARK: - Type mode
+    // MARK: - Type
 
     private var typeEditor: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("Your name", text: $typedText)
+            TextField(appState.newSignatureRole == .initials ? "Your initials (e.g. JD)" : "Your name",
+                      text: $typedText)
                 .textFieldStyle(.roundedBorder)
                 .font(.title3)
             HStack(spacing: 10) {
@@ -151,9 +154,7 @@ struct NewSignatureView: View {
         candidateImage = Self.renderTypedSignature(trimmed, font: typedFont)
     }
 
-    // MARK: - Draw mode
-
-    @State private var showCanvas = false
+    // MARK: - Draw
 
     private var drawEditor: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -179,7 +180,7 @@ struct NewSignatureView: View {
         }
     }
 
-    // MARK: - Upload mode
+    // MARK: - Upload
 
     private var uploadEditor: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -193,7 +194,6 @@ struct NewSignatureView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-
             Text("PNG, JPEG or TIFF. A transparent background reads best.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -202,19 +202,17 @@ struct NewSignatureView: View {
 
     private func openImagePicker() {
         let panel = NSOpenPanel()
-        panel.title = "Choose signature image"
+        panel.title = "Choose image"
         panel.allowedContentTypes = [.png, .jpeg, .tiff]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) {
             candidateImage = image
-            if name.isEmpty {
-                name = url.deletingPathExtension().lastPathComponent
-            }
+            if name.isEmpty { name = url.deletingPathExtension().lastPathComponent }
         }
     }
 
-    // MARK: - Paste mode
+    // MARK: - Paste
 
     private var pasteEditor: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -230,7 +228,7 @@ struct NewSignatureView: View {
             .buttonStyle(.plain)
             .keyboardShortcut("v", modifiers: .command)
 
-            Text("Copy a signature image from Preview, Photos, Mail, Screenshot, etc., then click here (or press ⌘V).")
+            Text("Copy any image (Preview, Photos, Mail, Screenshot), then click here (or press ⌘V).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -249,7 +247,7 @@ struct NewSignatureView: View {
 
     private func save() {
         guard let image = candidateImage else { return }
-        appState.addSignature(image: image, name: name)
+        appState.addSignature(image: image, name: name, role: appState.newSignatureRole)
         dismiss()
     }
 
@@ -267,16 +265,12 @@ struct NewSignatureView: View {
         image.lockFocus()
         NSColor.white.setFill()
         NSRect(origin: .zero, size: padded).fill()
-        (text as NSString).draw(
-            at: NSPoint(x: 20, y: 10),
-            withAttributes: attrs
-        )
+        (text as NSString).draw(at: NSPoint(x: 20, y: 10), withAttributes: attrs)
         image.unlockFocus()
         return image
     }
 }
 
-/// Handwriting-style fonts that ship with macOS.
 enum TypedFont: String, CaseIterable, Identifiable, Codable {
     case elegant, classic, casual, marker
 

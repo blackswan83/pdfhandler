@@ -2,9 +2,9 @@
 //  PDFPreviewView.swift
 //  PDFHandler
 //
-//  Shows a single PDF page rendered to an NSImage and overlays any
-//  signature placements for that page. Clicking on empty space drops
-//  a new placement using the currently-active signature.
+//  Shows the current page rendered to an NSImage and overlays any
+//  placements for that page. Clicking empty space drops a new
+//  placement using the active tool.
 //
 
 import SwiftUI
@@ -16,11 +16,10 @@ struct PDFPreviewView: View {
 
     var body: some View {
         GeometryReader { geo in
-            if let pdf = appState.document,
-               pdf.pageCount > 0,
+            if let pdf = appState.document, pdf.pageCount > 0,
                let page = pdf.page(at: clampedPageIndex(pageCount: pdf.pageCount)) {
-                let box = PDFDisplayBox.mediaBox
-                let bounds = page.bounds(for: box)
+
+                let bounds = page.bounds(for: .mediaBox)
                 let fit = fittedSize(pageSize: bounds.size, container: geo.size)
 
                 ZStack(alignment: .topLeading) {
@@ -43,21 +42,9 @@ struct PDFPreviewView: View {
                                     }
                             )
 
-                        // Existing placements on this page.
                         ForEach(appState.placements(onPage: appState.currentPageIndex)) { placement in
-                            if let sig = appState.signature(id: placement.signatureID) {
-                                SignaturePlacementView(
-                                    placement: placement,
-                                    signature: sig,
-                                    pageSize: fit,
-                                    onUpdate: { newRect in
-                                        appState.updatePlacement(id: placement.id, normalizedRect: newRect)
-                                    },
-                                    onDelete: {
-                                        appState.removePlacement(id: placement.id)
-                                    }
-                                )
-                            }
+                            PlacementView(placement: placement, pageSize: fit)
+                                .environmentObject(appState)
                         }
                     }
                     .frame(width: fit.width, height: fit.height)
@@ -108,9 +95,7 @@ struct PDFPreviewView: View {
 
     private func fittedSize(pageSize: CGSize, container: CGSize) -> CGSize {
         guard pageSize.width > 0, pageSize.height > 0,
-              container.width > 0, container.height > 0 else {
-            return .zero
-        }
+              container.width > 0, container.height > 0 else { return .zero }
         let scale = min(
             (container.width  - 32) / pageSize.width,
             (container.height - 32) / pageSize.height
@@ -129,6 +114,6 @@ struct PDFPreviewView: View {
             x: min(max(location.x / pageSize.width, 0), 1),
             y: min(max(location.y / pageSize.height, 0), 1)
         )
-        appState.addPlacement(at: normalized, pageIndex: appState.currentPageIndex)
+        appState.addPlacement(at: normalized)
     }
 }

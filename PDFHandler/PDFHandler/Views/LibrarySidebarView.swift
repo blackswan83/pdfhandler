@@ -2,82 +2,92 @@
 //  LibrarySidebarView.swift
 //  PDFHandler
 //
-//  Sidebar that lists the saved signatures. Tapping one makes it the
-//  "active" signature — the next click on the PDF preview drops it
-//  onto the page. Includes an "Add new" button and per-row delete.
+//  Two sub-lists of library entries (Signatures + Initials) that
+//  appear inside the main sidebar when the user is in Sign mode.
+//  Each row: thumbnail + name; tap to activate that entry as the
+//  active asset for the corresponding field tool; trash to delete.
 //
 
 import SwiftUI
 import AppKit
 
-struct LibrarySidebarView: View {
+/// Renders as two `Section`s intended to live inside the sidebar's
+/// outer `List`.
+struct LibrarySidebarSections: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-
-            Divider()
-
-            if appState.signatures.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(appState.signatures) { entry in
-                            row(for: entry)
-                        }
-                    }
-                    .padding(8)
-                }
+        Section("Signatures") {
+            rows(for: .signature, activeID: appState.activeSignatureID) { id in
+                appState.activeSignatureID = id
             }
-
-            Spacer(minLength: 0)
-
-            Divider()
-            footerHint
-        }
-        .frame(minWidth: 220, idealWidth: 240)
-        .background(Color(nsColor: .underPageBackgroundColor))
-    }
-
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            Text("Signatures")
-                .font(.headline)
-            Spacer()
-            Button {
+            addRow(label: "Add signature…") {
+                appState.newSignatureRole = .signature
                 appState.isPresentingNewSignature = true
-            } label: {
-                Image(systemName: "plus")
             }
-            .help("Add a new signature")
-            .buttonStyle(.borderless)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        Section("Initials") {
+            rows(for: .initials, activeID: appState.activeInitialsID) { id in
+                appState.activeInitialsID = id
+            }
+            addRow(label: "Add initials…") {
+                appState.newSignatureRole = .initials
+                appState.isPresentingNewSignature = true
+            }
+        }
     }
-
-    // MARK: - Row
 
     @ViewBuilder
-    private func row(for entry: SavedSignature) -> some View {
-        let isActive = appState.activeSignatureID == entry.id
+    private func rows(
+        for role: SavedSignatureRole,
+        activeID: UUID?,
+        onActivate: @escaping (UUID) -> Void
+    ) -> some View {
+        let entries = appState.signatures(role: role)
+        if entries.isEmpty {
+            Text(role == .signature
+                 ? "No signatures yet."
+                 : "No initials yet.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(entries) { entry in
+                LibraryRow(
+                    entry: entry,
+                    isActive: entry.id == activeID,
+                    onActivate: { onActivate(entry.id) },
+                    onDelete: { appState.deleteSignature(id: entry.id) }
+                )
+            }
+        }
+    }
 
-        HStack(spacing: 10) {
-            Button {
-                appState.activeSignatureID = entry.id
-            } label: {
-                HStack(spacing: 10) {
+    private func addRow(label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(label, systemImage: "plus.circle")
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct LibraryRow: View {
+    let entry: SavedSignature
+    let isActive: Bool
+    let onActivate: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onActivate) {
+                HStack(spacing: 8) {
                     if let image = entry.image {
                         Image(nsImage: image)
                             .resizable()
                             .interpolation(.high)
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 72, height: 28)
-                            .padding(3)
+                            .frame(width: 56, height: 22)
+                            .padding(2)
                             .background(Color.white)
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
@@ -87,57 +97,17 @@ struct LibrarySidebarView: View {
                         .foregroundStyle(isActive ? Color.accentColor : Color.primary)
                     Spacer(minLength: 0)
                 }
-                .padding(6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isActive ? Color.accentColor.opacity(0.12) : Color.clear)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(isActive ? Color.accentColor.opacity(0.4) : Color.clear, lineWidth: 1)
-                )
+                .padding(.vertical, 2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            Button {
-                appState.deleteSignature(id: entry.id)
-            } label: {
+            Button(action: onDelete) {
                 Image(systemName: "trash")
                     .foregroundStyle(.secondary)
             }
-            .help("Delete")
             .buttonStyle(.borderless)
+            .help("Delete")
         }
-        .padding(.horizontal, 2)
-    }
-
-    // MARK: - Empty state
-
-    private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "signature")
-                .font(.system(size: 32, weight: .light))
-                .foregroundStyle(.secondary)
-            Text("No signatures yet")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Button("Add signature") {
-                appState.isPresentingNewSignature = true
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
-    }
-
-    // MARK: - Footer hint
-
-    private var footerHint: some View {
-        Text(appState.activeSignatureID == nil
-             ? "Select a signature, then click on the page to place it."
-             : "Click the page to place the selected signature. Drag to move, drag the handle to resize.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(10)
     }
 }

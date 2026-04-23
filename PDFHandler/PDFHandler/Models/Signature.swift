@@ -2,54 +2,64 @@
 //  Signature.swift
 //  PDFHandler
 //
-//  Model types for stored signatures and their placement on PDF pages.
+//  The user's saved signature / initials assets. Persisted as PNG
+//  bytes inside a JSON index; see Services/SignatureLibrary.swift.
 //
 
 import Foundation
 import AppKit
 
-/// A signature image saved in the user's library.
+/// Whether a saved entry is a full signature or a compact set of
+/// initials. Surfaced as two sub-lists in the library sidebar.
+enum SavedSignatureRole: String, Codable, CaseIterable, Identifiable {
+    case signature
+    case initials
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .signature: return "Signature"
+        case .initials:  return "Initials"
+        }
+    }
+}
+
+/// A signature or initials image saved in the user's library.
 struct SavedSignature: Identifiable, Codable, Hashable {
     let id: UUID
     var name: String
     let imageData: Data   // PNG bytes
     let createdAt: Date
+    var role: SavedSignatureRole
 
-    init(id: UUID = UUID(), name: String, imageData: Data, createdAt: Date = Date()) {
+    init(
+        id: UUID = UUID(),
+        name: String,
+        imageData: Data,
+        createdAt: Date = Date(),
+        role: SavedSignatureRole = .signature
+    ) {
         self.id = id
         self.name = name
         self.imageData = imageData
         self.createdAt = createdAt
+        self.role = role
     }
 
-    var image: NSImage? {
-        NSImage(data: imageData)
+    var image: NSImage? { NSImage(data: imageData) }
+
+    // Backwards-compatible decoding: older library files have no role.
+    enum CodingKeys: String, CodingKey {
+        case id, name, imageData, createdAt, role
     }
-}
 
-/// A single placement of a saved signature on a specific page.
-/// Coordinates are normalized 0…1 against the page's mediaBox so the
-/// same placement renders correctly at any preview size and maps
-/// cleanly to PDF coordinates at export time.
-///
-/// Note: intentionally not Hashable — CGRect is not Hashable on
-/// macOS 13, and Identifiable is all SwiftUI needs here.
-struct SignaturePlacement: Identifiable {
-    let id: UUID
-    let signatureID: UUID
-    var pageIndex: Int        // 0-based
-    var normalizedRect: CGRect // origin + size, all in 0…1 (top-left origin)
-
-    init(
-        id: UUID = UUID(),
-        signatureID: UUID,
-        pageIndex: Int,
-        normalizedRect: CGRect
-    ) {
-        self.id = id
-        self.signatureID = signatureID
-        self.pageIndex = pageIndex
-        self.normalizedRect = normalizedRect
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id         = try c.decode(UUID.self,   forKey: .id)
+        self.name       = try c.decode(String.self, forKey: .name)
+        self.imageData  = try c.decode(Data.self,   forKey: .imageData)
+        self.createdAt  = try c.decode(Date.self,   forKey: .createdAt)
+        self.role       = try c.decodeIfPresent(SavedSignatureRole.self, forKey: .role) ?? .signature
     }
 }
 
