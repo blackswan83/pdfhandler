@@ -275,10 +275,36 @@ struct NewSignatureView: View {
         ]
         let size = (text as NSString).size(withAttributes: attrs)
         let padded = NSSize(width: size.width + 40, height: size.height + 20)
+
+        // Same trick as SignatureCanvasView.render: draw into an
+        // explicit RGBA CGContext so the glyphs land on a guaranteed-
+        // transparent bitmap. NSImage(size:).lockFocus() can hand back
+        // an opaque RGB rep that quietly produces white-boxed PNGs.
+        let width  = Int(padded.width)
+        let height = Int(padded.height)
+        if width > 0, height > 0,
+           let cs = CGColorSpace(name: CGColorSpace.sRGB),
+           let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: cs,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+           ) {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+            (text as NSString).draw(at: NSPoint(x: 20, y: 10), withAttributes: attrs)
+            NSGraphicsContext.restoreGraphicsState()
+            if let cgImage = ctx.makeImage() {
+                return NSImage(cgImage: cgImage, size: padded)
+            }
+        }
+        // Fallback (shouldn't hit unless CG init failed): the old
+        // lockFocus path, may produce opaque background.
         let image = NSImage(size: padded)
         image.lockFocus()
-        // No background fill — glyphs paint onto a transparent canvas so
-        // the rendered signature drops cleanly onto document content.
         (text as NSString).draw(at: NSPoint(x: 20, y: 10), withAttributes: attrs)
         image.unlockFocus()
         return image

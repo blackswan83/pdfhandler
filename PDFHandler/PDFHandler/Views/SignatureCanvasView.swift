@@ -85,16 +85,35 @@ struct SignatureCanvasView: View {
     private func render() -> NSImage? {
         guard !strokes.isEmpty else { return nil }
 
-        let image = NSImage(size: canvasSize)
-        image.lockFocus()
-        defer { image.unlockFocus() }
+        // `NSImage(size:).lockFocus()` does NOT reliably give us an
+        // alpha-aware bitmap — the backing representation can come out
+        // as RGB-without-alpha so the saved PNG is opaque, even with
+        // no background fill. Draw into an explicit RGBA CGContext
+        // (premultipliedLast) to guarantee transparency end-to-end:
+        // canvas → NSImage → tiffRepresentation → PNG → NSImage stamp
+        // on PDF.
+        let width  = Int(canvasSize.width)
+        let height = Int(canvasSize.height)
+        guard width > 0, height > 0,
+              let cs = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: cs,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              )
+        else { return nil }
 
-        // Intentionally NO background fill: keep the image transparent
-        // so the strokes float on top of the document instead of being
-        // boxed inside a white card.
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
 
-        // SwiftUI coordinates have origin at top-left; NSImage (flipped=false)
-        // has origin at bottom-left. Mirror Y so strokes land correctly.
+        // SwiftUI coordinates have origin at top-left; CGContext
+        // (flipped: false) has origin at bottom-left. Mirror Y so the
+        // strokes land where the user drew them.
         let path = NSBezierPath()
         path.lineWidth = 2.2
         path.lineCapStyle = .round
@@ -108,6 +127,7 @@ struct SignatureCanvasView: View {
         NSColor.black.setStroke()
         path.stroke()
 
-        return image
+        guard let cgImage = ctx.makeImage() else { return nil }
+        return NSImage(cgImage: cgImage, size: canvasSize)
     }
 }

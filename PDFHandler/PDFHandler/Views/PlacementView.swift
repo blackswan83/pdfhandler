@@ -138,7 +138,13 @@ struct PlacementView: View {
     private var bodyDrag: some Gesture {
         // minimumDistance 4 leaves clicks for the tap gesture and text
         // field focus; nudges still register at very low thresholds.
-        DragGesture(minimumDistance: 4)
+        // coordinateSpace .global is critical: the view that owns this
+        // gesture moves while the user is dragging (its .position
+        // shifts as we update normalizedRect), so a .local translation
+        // is measured against a moving reference frame and starts
+        // oscillating. .global anchors the measurement to the window,
+        // so translation grows monotonically with cursor movement.
+        DragGesture(minimumDistance: 4, coordinateSpace: .global)
             .onChanged { value in
                 if dragStart == nil {
                     dragStart = pixelRect
@@ -174,7 +180,12 @@ struct PlacementView: View {
     }
 
     private var resizeDrag: some Gesture {
-        DragGesture(minimumDistance: 0)
+        // .global coordinateSpace: the handle's anchor is .bottomTrailing
+        // of the placement frame, which grows as the user drags. With
+        // .local, translation is measured against the moving handle and
+        // feedback-loops into "shaking" oscillation. .global pins the
+        // measurement to the window so translation tracks the cursor.
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
                 if dragStart == nil {
                     dragStart = pixelRect
