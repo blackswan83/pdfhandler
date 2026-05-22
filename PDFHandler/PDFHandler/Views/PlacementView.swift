@@ -128,7 +128,9 @@ struct PlacementView: View {
     // MARK: - Drag body
 
     private var bodyDrag: some Gesture {
-        DragGesture(minimumDistance: 1)
+        // minimumDistance 4 leaves clicks for the tap gesture and text
+        // field focus; nudges still register at very low thresholds.
+        DragGesture(minimumDistance: 4)
             .onChanged { value in
                 if dragStart == nil {
                     dragStart = pixelRect
@@ -147,18 +149,24 @@ struct PlacementView: View {
     // MARK: - Resize handle
 
     private var resizeHandle: some View {
+        // Roomy, obviously grabbable knob at the bottom-right corner.
+        // The 10pt padding around the 18pt symbol gives a ~38pt hit
+        // target that straddles the corner — half inside the frame for
+        // visibility, half outside so a thumb-tip can grab it on small
+        // placements. `.highPriorityGesture` ensures the parent body
+        // drag never steals the resize touch.
         Image(systemName: "arrow.down.right.square.fill")
-            .font(.system(size: 14))
+            .font(.system(size: 18, weight: .bold))
             .symbolRenderingMode(.palette)
             .foregroundStyle(.white, Color.accentColor)
-            .padding(2)
+            .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+            .padding(10)
             .contentShape(Rectangle())
-            .offset(x: 6, y: 6)
-            .gesture(resizeDrag)
+            .highPriorityGesture(resizeDrag)
     }
 
     private var resizeDrag: some Gesture {
-        DragGesture(minimumDistance: 1)
+        DragGesture(minimumDistance: 0)
             .onChanged { value in
                 if dragStart == nil {
                     dragStart = pixelRect
@@ -184,7 +192,10 @@ struct PlacementView: View {
                 }
                 emit(origin: start.origin, size: CGSize(width: newW, height: newH))
             }
-            .onEnded { _ in dragStart = nil }
+            .onEnded { _ in
+                dragStart = nil
+                appState.commitPlacementSize(id: placement.id)
+            }
     }
 
     // MARK: - Normalize + emit

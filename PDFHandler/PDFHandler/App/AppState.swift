@@ -66,6 +66,19 @@ final class AppState: ObservableObject {
     @Published var activeTool: FieldTool = .signature
     @Published var selectedPlacementID: UUID?
 
+    // MARK: Remembered placement sizes (persisted across launches)
+    // Normalized 0…1 against page bounds. Width is enough for image-
+    // backed kinds (height is derived from the asset's aspect ratio
+    // and the page aspect). Date / freeText / checkbox store both.
+    @AppStorage("lastSize.signature.w") private var lastSizeSignatureW: Double = 0.25
+    @AppStorage("lastSize.initials.w")  private var lastSizeInitialsW:  Double = 0.12
+    @AppStorage("lastSize.date.w")      private var lastSizeDateW:      Double = 0.20
+    @AppStorage("lastSize.date.h")      private var lastSizeDateH:      Double = 0.035
+    @AppStorage("lastSize.freeText.w")  private var lastSizeFreeTextW:  Double = 0.22
+    @AppStorage("lastSize.freeText.h")  private var lastSizeFreeTextH:  Double = 0.04
+    @AppStorage("lastSize.checkbox.w")  private var lastSizeCheckboxW:  Double = 0.03
+    @AppStorage("lastSize.checkbox.h")  private var lastSizeCheckboxH:  Double = 0.03
+
     // MARK: Compress mode
     @Published var compressSourceURL: URL?
     @Published var compressPreset: GhostscriptPreset = .ebook
@@ -188,7 +201,9 @@ final class AppState: ObservableObject {
     // MARK: - Placements
 
     /// Drop a new placement of the active tool type at a normalized
-    /// page-relative point (top-left origin, 0…1).
+    /// page-relative point (top-left origin, 0…1). Uses the size the
+    /// user last left this kind of field at — so initialing 30 pages
+    /// in a row is consistent without re-resizing every drop.
     func addPlacement(at normalizedPoint: CGPoint) {
         guard document != nil else { return }
         let pageIndex = currentPageIndex
@@ -197,16 +212,21 @@ final class AppState: ObservableObject {
             switch activeTool {
             case .signature:
                 guard let id = activeSignatureID else { return (.freeText(text: "", fontSize: 14), .zero) }
-                return (.signature(signatureID: id), defaultImageSize(forSignatureID: id))
+                return (.signature(signatureID: id),
+                        imageSize(widthFraction: lastSizeSignatureW, signatureID: id))
             case .initials:
                 guard let id = activeInitialsID else { return (.freeText(text: "", fontSize: 14), .zero) }
-                return (.initials(signatureID: id), CGSize(width: 0.10, height: 0.04))
+                return (.initials(signatureID: id),
+                        imageSize(widthFraction: lastSizeInitialsW, signatureID: id))
             case .date:
-                return (.date(text: todayText()), CGSize(width: 0.20, height: 0.035))
+                return (.date(text: todayText()),
+                        CGSize(width: lastSizeDateW, height: lastSizeDateH))
             case .freeText:
-                return (.freeText(text: "Text", fontSize: 14), CGSize(width: 0.22, height: 0.04))
+                return (.freeText(text: "Text", fontSize: 14),
+                        CGSize(width: lastSizeFreeTextW, height: lastSizeFreeTextH))
             case .checkbox:
-                return (.checkbox(isChecked: false), CGSize(width: 0.03, height: 0.03))
+                return (.checkbox(isChecked: false),
+                        CGSize(width: lastSizeCheckboxW, height: lastSizeCheckboxH))
             }
         }()
 
@@ -233,6 +253,22 @@ final class AppState: ObservableObject {
         guard let idx = placements.firstIndex(where: { $0.id == id }) else { return }
         undoCoordinator.apply("Move / Resize") {
             placements[idx].normalizedRect = normalizedRect
+        }
+    }
+
+    /// Called when a drag/resize finishes. Persists the new size so the
+    /// next placement of the same kind uses it. No-op if the placement
+    /// was deleted before commit.
+    func commitPlacementSize(id: UUID) {
+        guard let p = placements.first(where: { $0.id == id }) else { return }
+        let w = Double(p.normalizedRect.width)
+        let h = Double(p.normalizedRect.height)
+        switch p.content {
+        case .signature: lastSizeSignatureW = w
+        case .initials:  lastSizeInitialsW  = w
+        case .date:      lastSizeDateW = w; lastSizeDateH = h
+        case .freeText:  lastSizeFreeTextW = w; lastSizeFreeTextH = h
+        case .checkbox:  lastSizeCheckboxW = w; lastSizeCheckboxH = h
         }
     }
 
@@ -434,12 +470,27 @@ final class AppState: ObservableObject {
 
     // MARK: - Helpers
 
-    private func defaultImageSize(forSignatureID id: UUID) -> CGSize {
-        guard let image = signature(id: id)?.image else { return CGSize(width: 0.25, height: 0.08) }
-        let s = image.size
-        let aspect = (s.width > 0 && s.height > 0) ? s.width / s.height : 3.0
-        let width: CGFloat = 0.25
-        return CGSize(width: width, height: width / aspect)
+    /// Compute the normalized rect size for an image-backed placement
+    /// so the frame matches the image's aspect ratio on the current
+    /// page. Normalized width and height live in different "axes"
+    /// (fractions of page width vs. page height respectively), so the
+    /// height fraction must include the page's own aspect ratio —
+    /// otherwise the frame is taller than the visible signature and
+    /// the resize handle ends up below a band of empty space.
+    private func imageSize(widthFraction: Double, signatureID: UUID) -> CGSize {
+        let clampedW = min(max(widthFraction, 0.02), 1.0)
+        let imageAspect: CGFloat = {
+            guard let image = signature(id: signatureID)?.image else { return 3.0 }
+            let s = image.size
+            return (s.width > 0 && s.height > 0) ? s.width / s.height : 3.0
+        }()
+        let pageAspect: CGFloat = {
+            guard let page = document?.page(at: currentPageIndex) else { return 8.5 / 11.0 }
+            let b = page.bounds(for: .mediaBox)
+            return (b.width > 0 && b.height > 0) ? b.width / b.height : 8.5 / 11.0
+        }()
+        let heightFraction = CGFloat(clampedW) / imageAspect * pageAspect
+        return CGSize(width: CGFloat(clampedW), height: heightFraction)
     }
 
     private func defaultSignatureName(role: SavedSignatureRole) -> String {
