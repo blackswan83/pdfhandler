@@ -89,8 +89,9 @@ struct SignatureCanvasView: View {
         image.lockFocus()
         defer { image.unlockFocus() }
 
-        NSColor.white.setFill()
-        NSRect(origin: .zero, size: canvasSize).fill()
+        // Intentionally NO background fill: keep the image transparent
+        // so the strokes float on top of the document instead of being
+        // boxed inside a white card.
 
         // SwiftUI coordinates have origin at top-left; NSImage (flipped=false)
         // has origin at bottom-left. Mirror Y so strokes land correctly.

@@ -58,8 +58,14 @@ struct PlacementView: View {
             .offset(x: 5, y: -5)
         }
         .frame(width: rect.width, height: rect.height, alignment: .topLeading)
-        .position(x: rect.midX, y: rect.midY)
-        .gesture(bodyDrag)
+        // ORDER MATTERS: .position turns its subject into a parent-
+        // filling layout (the view reports the proposed parent size
+        // and just paints its content at the given point). Any
+        // .overlay / .gesture / .contextMenu applied *after* .position
+        // therefore attaches to the *whole PDF preview area*, not the
+        // placement's frame — that bug put the resize handle in the
+        // corner of the page instead of next to the signature. Keep
+        // all interactive modifiers BEFORE .position.
         .overlay(resizeHandle, alignment: .bottomTrailing)
         .contextMenu {
             Button("Apply to every page") { appState.applyToEveryPage(id: placement.id) }
@@ -68,6 +74,8 @@ struct PlacementView: View {
                 appState.removePlacement(id: placement.id)
             } label: { Label("Delete", systemImage: "trash") }
         }
+        .gesture(bodyDrag)
+        .position(x: rect.midX, y: rect.midY)
     }
 
     // MARK: - Content dispatch

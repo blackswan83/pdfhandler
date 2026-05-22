@@ -43,6 +43,9 @@ struct NewSignatureView: View {
     @State private var candidateImage: NSImage?
     @State private var statusMessage: String?
     @State private var showCanvas = false
+    /// For Import / Paste modes: knock out near-white pixels so a
+    /// scanned signature drops onto the PDF without an opaque card.
+    @State private var removeWhiteBackground: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -194,7 +197,9 @@ struct NewSignatureView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-            Text("PNG, JPEG or TIFF. A transparent background reads best.")
+            Toggle("Remove white background automatically", isOn: $removeWhiteBackground)
+                .font(.caption)
+            Text("PNG, JPEG or TIFF. Toggle on (default) to chroma-key the white out of scanned signatures.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -228,6 +233,8 @@ struct NewSignatureView: View {
             .buttonStyle(.plain)
             .keyboardShortcut("v", modifiers: .command)
 
+            Toggle("Remove white background automatically", isOn: $removeWhiteBackground)
+                .font(.caption)
             Text("Copy any image (Preview, Photos, Mail, Screenshot), then click here (or press ⌘V).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -247,7 +254,14 @@ struct NewSignatureView: View {
 
     private func save() {
         guard let image = candidateImage else { return }
-        appState.addSignature(image: image, name: name, role: appState.newSignatureRole)
+        // For Import / Paste modes, knock out white background when
+        // requested. Type / Draw already render onto a transparent
+        // canvas so they need no post-processing.
+        let needsKnockout = (inputMode == .upload || inputMode == .paste) && removeWhiteBackground
+        let finalImage = needsKnockout
+            ? (image.knockingOutWhiteBackground() ?? image)
+            : image
+        appState.addSignature(image: finalImage, name: name, role: appState.newSignatureRole)
         dismiss()
     }
 
@@ -263,8 +277,8 @@ struct NewSignatureView: View {
         let padded = NSSize(width: size.width + 40, height: size.height + 20)
         let image = NSImage(size: padded)
         image.lockFocus()
-        NSColor.white.setFill()
-        NSRect(origin: .zero, size: padded).fill()
+        // No background fill — glyphs paint onto a transparent canvas so
+        // the rendered signature drops cleanly onto document content.
         (text as NSString).draw(at: NSPoint(x: 20, y: 10), withAttributes: attrs)
         image.unlockFocus()
         return image
