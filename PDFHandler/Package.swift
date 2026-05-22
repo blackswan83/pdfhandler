@@ -28,6 +28,13 @@ let package = Package(
                 "Resources/Info.plist",
                 "Resources/PDFHandler.entitlements",
                 "Resources/Assets.xcassets"
+            ],
+            swiftSettings: [
+                // MarkdownConverter.swift uses a bare-slash regex literal
+                // (`/[ \t]+/`) to collapse runs of whitespace. Xcode
+                // enables this feature by default; SwiftPM on Swift 5
+                // requires opting in.
+                .enableUpcomingFeature("BareSlashRegexLiterals")
             ]
         ),
         .testTarget(

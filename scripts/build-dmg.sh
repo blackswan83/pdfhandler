@@ -79,6 +79,15 @@ cp "$SRC_RESOURCES/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
 # PkgInfo is the classic 8-byte type/creator stamp for an application bundle.
 printf 'APPL????' > "$APP_BUNDLE/Contents/PkgInfo"
 
+# Render the app icon set deterministically from scripts/render-icon.swift.
+# Failure here is non-fatal — build continues without a custom icon.
+if [[ -x "$SCRIPT_DIR/render-icon.swift" ]]; then
+    echo "==> Rendering app icon"
+    if ! swift "$SCRIPT_DIR/render-icon.swift"; then
+        echo "   (icon renderer failed; continuing without custom icon)" >&2
+    fi
+fi
+
 # Compile the asset catalog (icons etc.) if actool is available and assets exist.
 ASSETS_SRC="$SRC_RESOURCES/Assets.xcassets"
 if command -v actool >/dev/null 2>&1 && [[ -d "$ASSETS_SRC" ]]; then
