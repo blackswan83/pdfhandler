@@ -2,16 +2,22 @@
 //  PDFFlattener.swift
 //  PDFHandler
 //
-//  Burns Placement overlays into a PDF copy, one image-stamp
-//  annotation per placement. Handles all content kinds (signature,
-//  initials, date, freeText, checkbox) by rasterizing whatever they
-//  represent to an NSImage first and then stamping a single
-//  annotation type — keeps the burn-in path narrow and predictable.
+//  Burns Placement overlays into a copy of the PDF by re-drawing every
+//  page into a fresh CGPDF context and compositing the overlays on
+//  top. This produces genuinely flattened output: page content stays
+//  vector, signatures are embedded bitmaps, text and checkboxes are
+//  drawn as vector art — all visible in any PDF viewer.
+//
+//  (The previous implementation stamped a custom PDFAnnotation
+//  subclass whose drawing only existed as a draw(with:in:) override.
+//  PDFKit never serializes an appearance stream for that, so the saved
+//  file showed empty stamps in Preview / Acrobat / Chrome.)
 //
 
 import Foundation
 import PDFKit
 import AppKit
+import CoreText
 
 enum PDFFlattenerError: LocalizedError {
     case cannotOpen
@@ -29,9 +35,15 @@ enum PDFFlattenerError: LocalizedError {
 
 struct PDFFlattener {
 
-    /// Writes a copy of `source` with every `placement` rendered as
-    /// an image stamp annotation. Output name: `<original>_signed.pdf`
-    /// next to the original.
+    /// Geometry / styling shared with the on-screen preview. Text is
+    /// sized off the box height so preview and burn-in stay WYSIWYG.
+    enum Style {
+        static let textFontFactor: CGFloat = 0.6
+        static let textInsetFactor: CGFloat = 0.12
+    }
+
+    /// Writes a copy of `source` with every `placement` drawn into the
+    /// page. Output name: `<original>_signed.pdf` next to the original.
     func flatten(
         source: URL,
         placements: [Placement],
@@ -43,20 +55,11 @@ struct PDFFlattener {
 
         let byID = Dictionary(uniqueKeysWithValues: signatures.map { ($0.id, $0) })
 
+        // Fail fast on dangling signature references before touching disk.
         for placement in placements {
-            guard placement.pageIndex >= 0,
-                  placement.pageIndex < document.pageCount,
-                  let page = document.page(at: placement.pageIndex)
-            else { continue }
-
-            guard let image = try renderImage(for: placement, pageSize: page.bounds(for: .mediaBox).size, library: byID) else {
-                continue
+            if let sigID = placement.content.referencedSignatureID, byID[sigID] == nil {
+                throw PDFFlattenerError.unknownSignature(sigID)
             }
-
-            let rect = Self.pdfRect(for: placement.normalizedRect, in: page)
-            let annotation = StampImageAnnotation(bounds: rect, image: image)
-            annotation.contents = placement.content.annotationContents
-            page.addAnnotation(annotation)
         }
 
         let baseName = source.deletingPathExtension().lastPathComponent
@@ -64,180 +67,143 @@ struct PDFFlattener {
             .deletingLastPathComponent()
             .appendingPathComponent("\(baseName)_signed.pdf")
 
-        guard document.write(to: outputURL) else {
+        let placementsByPage = Dictionary(grouping: placements, by: \.pageIndex)
+
+        guard let ctx = CGContext(outputURL as CFURL, mediaBox: nil, nil) else {
+            throw PDFFlattenerError.writeFailed(outputURL)
+        }
+
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+            let display = page.displaySize
+            guard display.width > 0, display.height > 0 else { continue }
+
+            var mediaBox = CGRect(origin: .zero, size: display)
+            ctx.beginPage(mediaBox: &mediaBox)
+            page.drawDisplayOriented(in: ctx)
+            for placement in placementsByPage[pageIndex] ?? [] {
+                draw(placement, displaySize: display, library: byID, in: ctx)
+            }
+            ctx.endPage()
+        }
+        ctx.closePDF()
+
+        guard FileManager.default.fileExists(atPath: outputURL.path) else {
             throw PDFFlattenerError.writeFailed(outputURL)
         }
         return outputURL
     }
 
-    // MARK: - Rendering
+    /// Convert a normalized rect (top-left origin, 0…1) to PDF page
+    /// coordinates (bottom-left origin, points) for a page displayed
+    /// at `displaySize`.
+    static func pdfRect(for normalized: CGRect, displaySize: CGSize) -> CGRect {
+        CGRect(
+            x: normalized.minX * displaySize.width,
+            y: (1.0 - normalized.minY - normalized.height) * displaySize.height,
+            width: normalized.width * displaySize.width,
+            height: normalized.height * displaySize.height
+        )
+    }
 
-    private func renderImage(
-        for placement: Placement,
-        pageSize: CGSize,
-        library: [UUID: SavedSignature]
-    ) throws -> NSImage? {
+    // MARK: - Drawing
+
+    private func draw(
+        _ placement: Placement,
+        displaySize: CGSize,
+        library: [UUID: SavedSignature],
+        in ctx: CGContext
+    ) {
+        let rect = Self.pdfRect(for: placement.normalizedRect, displaySize: displaySize)
+        guard rect.width > 0, rect.height > 0 else { return }
+
         switch placement.content {
         case .signature(let id), .initials(let id):
-            guard let entry = library[id] else {
-                throw PDFFlattenerError.unknownSignature(id)
-            }
-            return entry.image
+            guard let image = library[id]?.image,
+                  let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            else { return }
+            ctx.saveGState()
+            ctx.interpolationQuality = .high
+            ctx.draw(cg, in: aspectFitRect(imageSize: CGSize(width: cg.width, height: cg.height), in: rect))
+            ctx.restoreGState()
 
-        case .date(let text):
-            let width = placement.normalizedRect.width * pageSize.width
-            let height = placement.normalizedRect.height * pageSize.height
-            return TextStampRenderer.render(text: text, targetSize: CGSize(width: width, height: height), fontSize: nil)
-
-        case .freeText(let text, let fontSize):
-            let width = placement.normalizedRect.width * pageSize.width
-            let height = placement.normalizedRect.height * pageSize.height
-            return TextStampRenderer.render(text: text, targetSize: CGSize(width: width, height: height), fontSize: fontSize)
+        case .date(let text), .freeText(let text):
+            drawText(text, in: rect, context: ctx)
 
         case .checkbox(let isChecked):
-            let width = placement.normalizedRect.width * pageSize.width
-            let height = placement.normalizedRect.height * pageSize.height
-            return CheckboxStampRenderer.render(isChecked: isChecked, targetSize: CGSize(width: width, height: height))
+            drawCheckbox(isChecked: isChecked, in: rect, context: ctx)
         }
     }
 
-    /// Convert a normalized rect (top-left origin, 0…1) to the page's
-    /// PDF coordinate space (bottom-left origin, points).
-    static func pdfRect(for normalized: CGRect, in page: PDFPage) -> CGRect {
-        let bounds = page.bounds(for: .mediaBox)
-        let w = normalized.width * bounds.width
-        let h = normalized.height * bounds.height
-        let x = normalized.minX * bounds.width + bounds.minX
-        let y = bounds.minY + (1.0 - normalized.minY - normalized.height) * bounds.height
-        return CGRect(x: x, y: y, width: w, height: h)
-    }
-}
-
-// MARK: - Content extensions
-
-private extension PlacementContent {
-    var annotationContents: String {
-        switch self {
-        case .signature: return "Signature"
-        case .initials:  return "Initials"
-        case .date:      return "Date"
-        case .freeText:  return "Text"
-        case .checkbox:  return "Checkbox"
+    /// The preview shows images aspect-fit inside their frame; mirror
+    /// that here instead of stretching to the frame.
+    private func aspectFitRect(imageSize: CGSize, in rect: CGRect) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0 else { return rect }
+        let imageAspect = imageSize.width / imageSize.height
+        let rectAspect = rect.width / rect.height
+        if imageAspect > rectAspect {
+            let height = rect.width / imageAspect
+            return CGRect(x: rect.minX, y: rect.midY - height / 2, width: rect.width, height: height)
+        } else {
+            let width = rect.height * imageAspect
+            return CGRect(x: rect.midX - width / 2, y: rect.minY, width: width, height: rect.height)
         }
     }
-}
 
-// MARK: - NSImage stamp annotation
+    /// Vector text, left-aligned and vertically centered, font scaled
+    /// to the box height — exactly how PlacementView previews it.
+    private func drawText(_ text: String, in rect: CGRect, context: CGContext) {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
 
-/// Draws a bitmap image in the annotation's bounds. The stock
-/// .stamp annotation can't directly render an NSImage, so we
-/// override draw(with:in:) and composite the bitmap ourselves.
-final class StampImageAnnotation: PDFAnnotation {
-    private let stampImage: NSImage
+        let fontSize = max(4, rect.height * Style.textFontFactor)
+        let font = NSFont.systemFont(ofSize: fontSize)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): NSColor.black.cgColor,
+        ]
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        let line = CTLineCreateWithAttributedString(attributed as CFAttributedString)
 
-    init(bounds: CGRect, image: NSImage) {
-        self.stampImage = image
-        super.init(bounds: bounds, forType: .stamp, withProperties: nil)
-    }
-
-    required init?(coder: NSCoder) { return nil }
-
-    override func draw(with box: PDFDisplayBox, in context: CGContext) {
-        guard let cg = stampImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
         context.saveGState()
-        context.interpolationQuality = .high
-        context.draw(cg, in: bounds)
+        context.clip(to: rect)
+        let ascent = font.ascender
+        let descent = -font.descender
+        let baselineY = rect.midY - (ascent + descent) / 2 + descent
+        context.textPosition = CGPoint(
+            x: rect.minX + rect.height * Style.textInsetFactor,
+            y: baselineY
+        )
+        CTLineDraw(line, context)
         context.restoreGState()
     }
-}
 
-// MARK: - Text stamp renderer
-
-enum TextStampRenderer {
-    /// Rasterizes `text` centered into an NSImage of the given size.
-    /// Auto-picks a font size if `fontSize` is nil (scaled to fit).
-    static func render(text: String, targetSize: CGSize, fontSize: CGFloat?) -> NSImage? {
-        guard targetSize.width > 1, targetSize.height > 1 else { return nil }
-        let image = NSImage(size: targetSize)
-        image.lockFocus()
-        defer { image.unlockFocus() }
-
-        // Transparent background — PDF page shows through.
-        NSColor.clear.setFill()
-        NSRect(origin: .zero, size: targetSize).fill()
-
-        let resolvedSize: CGFloat
-        if let fontSize = fontSize {
-            resolvedSize = fontSize
-        } else {
-            // Fit-to-height: use ~60% of height as cap height, clamp.
-            resolvedSize = max(10, min(targetSize.height * 0.6, 96))
-        }
-
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        paragraph.lineBreakMode = .byClipping
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: resolvedSize, weight: .regular),
-            .foregroundColor: NSColor.black,
-            .paragraphStyle: paragraph
-        ]
-
-        let attributed = NSAttributedString(string: text, attributes: attributes)
-        let bounding = attributed.boundingRect(
-            with: NSSize(width: targetSize.width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-        let yOffset = max(0, (targetSize.height - bounding.height) / 2)
-        attributed.draw(in: NSRect(
-            x: 0,
-            y: yOffset,
-            width: targetSize.width,
-            height: bounding.height
-        ))
-        return image
-    }
-}
-
-// MARK: - Checkbox stamp renderer
-
-enum CheckboxStampRenderer {
-    static func render(isChecked: Bool, targetSize: CGSize) -> NSImage? {
-        guard targetSize.width > 1, targetSize.height > 1 else { return nil }
-        let image = NSImage(size: targetSize)
-        image.lockFocus()
-        defer { image.unlockFocus() }
-
-        NSColor.clear.setFill()
-        NSRect(origin: .zero, size: targetSize).fill()
-
-        let side = min(targetSize.width, targetSize.height)
-        let inset: CGFloat = max(1, side * 0.08)
-        let rect = NSRect(
-            x: (targetSize.width - side) / 2 + inset,
-            y: (targetSize.height - side) / 2 + inset,
+    private func drawCheckbox(isChecked: Bool, in rect: CGRect, context: CGContext) {
+        let side = min(rect.width, rect.height)
+        guard side > 1 else { return }
+        let inset = max(0.5, side * 0.08)
+        let box = CGRect(
+            x: rect.midX - side / 2 + inset,
+            y: rect.midY - side / 2 + inset,
             width: side - inset * 2,
             height: side - inset * 2
         )
 
-        NSColor.black.setStroke()
-        let box = NSBezierPath(roundedRect: rect, xRadius: side * 0.08, yRadius: side * 0.08)
-        box.lineWidth = max(1, side * 0.05)
-        box.stroke()
+        context.saveGState()
+        context.setStrokeColor(NSColor.black.cgColor)
+        context.setLineWidth(max(0.75, side * 0.05))
+        let radius = side * 0.08
+        context.addPath(CGPath(roundedRect: box, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        context.strokePath()
 
         if isChecked {
-            let checkmark = NSBezierPath()
-            checkmark.move(to: NSPoint(x: rect.minX + rect.width * 0.18, y: rect.minY + rect.height * 0.52))
-            checkmark.line(to: NSPoint(x: rect.minX + rect.width * 0.42, y: rect.minY + rect.height * 0.30))
-            checkmark.line(to: NSPoint(x: rect.minX + rect.width * 0.82, y: rect.minY + rect.height * 0.72))
-            checkmark.lineWidth = max(1.5, side * 0.09)
-            checkmark.lineCapStyle = .round
-            checkmark.lineJoinStyle = .round
-            NSColor.black.setStroke()
-            checkmark.stroke()
+            context.setLineWidth(max(1, side * 0.09))
+            context.setLineCap(.round)
+            context.setLineJoin(.round)
+            context.move(to: CGPoint(x: box.minX + box.width * 0.18, y: box.minY + box.height * 0.52))
+            context.addLine(to: CGPoint(x: box.minX + box.width * 0.42, y: box.minY + box.height * 0.30))
+            context.addLine(to: CGPoint(x: box.minX + box.width * 0.82, y: box.minY + box.height * 0.72))
+            context.strokePath()
         }
-
-        return image
+        context.restoreGState()
     }
 }

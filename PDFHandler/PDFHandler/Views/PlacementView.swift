@@ -2,12 +2,21 @@
 //  PlacementView.swift
 //  PDFHandler
 //
-//  A single dragged/resizable field on the PDF preview. Dispatches on
-//  the placement's content kind: image-backed entries (signature,
-//  initials) render the library NSImage; date / freeText render
-//  inline Text; checkbox renders a toggleable symbol. Regardless of
-//  kind, drag moves the body, drag on the bottom-right handle
-//  resizes (aspect ratio kept for image-backed kinds).
+//  A single draggable / resizable field on the PDF preview.
+//
+//  Interaction model (DocuSign-style):
+//    • click        → select (checkboxes also toggle)
+//    • drag         → move
+//    • corner knob  → resize (aspect kept for images / checkboxes;
+//                     text fields resize freely and their font scales
+//                     with the box height)
+//    • double-click → edit text inline (date / free text)
+//    • ⌫ / Esc / arrows are handled by SignWorkspaceView's key monitor
+//
+//  All drag gestures are measured in the page's named coordinate
+//  space. A gesture measured in the moving view's own space feeds its
+//  own translation back into itself — that feedback loop is what made
+//  resizing "shake all over the screen" before.
 //
 
 import SwiftUI
@@ -19,7 +28,10 @@ struct PlacementView: View {
     @EnvironmentObject var appState: AppState
 
     @State private var dragStart: CGRect?
-    @State private var editingText: String = ""
+    @State private var preDragPlacements: [Placement]?
+    @State private var isHovering = false
+    @State private var draft: String = ""
+    @FocusState private var textFocused: Bool
 
     private var pixelRect: CGRect {
         CGRect(
@@ -34,54 +46,66 @@ struct PlacementView: View {
         appState.selectedPlacementID == placement.id
     }
 
+    private var isEditing: Bool {
+        appState.editingPlacementID == placement.id
+    }
+
+    private var showsControls: Bool {
+        isSelected || isHovering || dragStart != nil
+    }
+
     var body: some View {
         let rect = pixelRect
 
-        ZStack(alignment: .topTrailing) {
-            content
-                .frame(width: rect.width, height: rect.height)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 3)
-                        .stroke(isSelected ? Color.accentColor : Color.accentColor.opacity(0.45),
-                                lineWidth: isSelected ? 1.5 : 1)
-                )
-                .contentShape(Rectangle())
-                .onTapGesture { appState.selectedPlacementID = placement.id }
-
-            Button(action: { appState.removePlacement(id: placement.id) }) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 14))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, Color.red)
+        content(rect: rect)
+            .frame(width: rect.width, height: rect.height)
+            .clipped()
+            .overlay(border)
+            .contentShape(Rectangle())
+            // ORDER MATTERS: .position turns its subject into a parent-
+            // filling layout. Any .overlay / .gesture / .contextMenu
+            // applied *after* .position attaches to the whole PDF
+            // preview area, not the placement's frame. Keep all
+            // interactive modifiers BEFORE .position.
+            .overlay(alignment: .bottomTrailing) {
+                if showsControls { resizeHandle }
             }
-            .buttonStyle(.plain)
-            .offset(x: 5, y: -5)
-        }
-        .frame(width: rect.width, height: rect.height, alignment: .topLeading)
-        // ORDER MATTERS: .position turns its subject into a parent-
-        // filling layout (the view reports the proposed parent size
-        // and just paints its content at the given point). Any
-        // .overlay / .gesture / .contextMenu applied *after* .position
-        // therefore attaches to the *whole PDF preview area*, not the
-        // placement's frame — that bug put the resize handle in the
-        // corner of the page instead of next to the signature. Keep
-        // all interactive modifiers BEFORE .position.
-        .overlay(resizeHandle, alignment: .bottomTrailing)
-        .contextMenu {
-            Button("Apply to every page") { appState.applyToEveryPage(id: placement.id) }
-            Divider()
-            Button(role: .destructive) {
-                appState.removePlacement(id: placement.id)
-            } label: { Label("Delete", systemImage: "trash") }
-        }
-        .gesture(bodyDrag)
-        .position(x: rect.midX, y: rect.midY)
+            .overlay(alignment: .topTrailing) {
+                if showsControls { deleteButton }
+            }
+            .contextMenu {
+                Button("Apply to every page") { appState.applyToEveryPage(id: placement.id) }
+                Divider()
+                Button(role: .destructive) {
+                    appState.removePlacement(id: placement.id)
+                } label: { Label("Delete", systemImage: "trash") }
+            }
+            .simultaneousGesture(editTap)
+            .simultaneousGesture(selectTap)
+            .gesture(bodyDrag, including: isEditing ? .subviews : .all)
+            .onHover { hovering in
+                isHovering = hovering
+                guard !isEditing else { return }
+                if hovering, dragStart == nil {
+                    NSCursor.openHand.set()
+                } else if !hovering, dragStart == nil {
+                    NSCursor.arrow.set()
+                }
+            }
+            .position(x: rect.midX, y: rect.midY)
+            .onAppear {
+                // A freshly dropped, still-empty text box goes straight
+                // into editing so the user can just start typing.
+                if case .freeText(let text) = placement.content, text.isEmpty, isSelected {
+                    appState.editingPlacementID = placement.id
+                }
+            }
     }
 
     // MARK: - Content dispatch
 
     @ViewBuilder
-    private var content: some View {
+    private func content(rect: CGRect) -> some View {
         switch placement.content {
         case .signature(let id), .initials(let id):
             if let image = appState.signature(id: id)?.image {
@@ -92,100 +116,172 @@ struct PlacementView: View {
             } else {
                 Color.gray.opacity(0.2)
             }
+
         case .date(let text):
-            dateText(text)
-        case .freeText(let text, let fontSize):
-            freeText(text, fontSize: fontSize)
-        case .checkbox(let isChecked):
-            Button {
-                appState.updateContent(id: placement.id, content: .checkbox(isChecked: !isChecked))
-            } label: {
-                Image(systemName: isChecked ? "checkmark.square.fill" : "square")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .foregroundStyle(Color.black)
+            textContent(text, rect: rect) {
+                appState.updateContentLive(id: placement.id, content: .date(text: $0))
             }
-            .buttonStyle(.plain)
+
+        case .freeText(let text):
+            textContent(text, rect: rect) {
+                appState.updateContentLive(id: placement.id, content: .freeText(text: $0))
+            }
+
+        case .checkbox(let isChecked):
+            Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .foregroundStyle(Color.black)
+                .padding(rect.height * 0.04)
         }
     }
 
-    private func dateText(_ text: String) -> some View {
-        TextField("", text: Binding(
-            get: { text },
-            set: { appState.updateContent(id: placement.id, content: .date(text: $0)) }
-        ))
-        .textFieldStyle(.plain)
-        .font(.system(size: max(10, pixelRect.height * 0.55)))
-        .foregroundStyle(Color.black)
-        .padding(.horizontal, 2)
-        .background(Color.white.opacity(0.001))
+    /// Same font / inset math as PDFFlattener so the preview is
+    /// WYSIWYG with the burned-in output.
+    @ViewBuilder
+    private func textContent(
+        _ text: String,
+        rect: CGRect,
+        onEdit: @escaping (String) -> Void
+    ) -> some View {
+        let fontSize = max(8, rect.height * PDFFlattener.Style.textFontFactor)
+        let inset = rect.height * PDFFlattener.Style.textInsetFactor
+
+        if isEditing {
+            TextField("Text", text: Binding(
+                get: { draft },
+                set: { draft = $0; onEdit($0) }
+            ))
+            .textFieldStyle(.plain)
+            .font(.system(size: fontSize))
+            .foregroundStyle(Color.black)
+            .padding(.horizontal, inset)
+            .focused($textFocused)
+            .onSubmit { appState.editingPlacementID = nil }
+            .onAppear {
+                draft = text
+                DispatchQueue.main.async { textFocused = true }
+            }
+            .onChange(of: textFocused) { focused in
+                if !focused, isEditing {
+                    appState.editingPlacementID = nil
+                }
+            }
+        } else {
+            Text(text.isEmpty ? "Text" : text)
+                .font(.system(size: fontSize))
+                .foregroundStyle(text.isEmpty ? Color.gray.opacity(0.65) : Color.black)
+                .lineLimit(1)
+                .padding(.horizontal, inset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
     }
 
-    private func freeText(_ text: String, fontSize: CGFloat) -> some View {
-        TextField("Text", text: Binding(
-            get: { text },
-            set: { appState.updateContent(id: placement.id, content: .freeText(text: $0, fontSize: fontSize)) }
-        ))
-        .textFieldStyle(.plain)
-        .font(.system(size: fontSize))
-        .foregroundStyle(Color.black)
-        .padding(.horizontal, 2)
-        .background(Color.white.opacity(0.001))
+    // MARK: - Chrome
+
+    private var border: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .stroke(
+                isSelected
+                    ? Color.accentColor
+                    : isHovering
+                        ? Color.accentColor.opacity(0.6)
+                        : Color.accentColor.opacity(placement.content.isImageBacked ? 0 : 0.35),
+                style: StrokeStyle(
+                    lineWidth: isSelected ? 1.5 : 1,
+                    dash: isSelected || placement.content.isImageBacked ? [] : [4, 3]
+                )
+            )
     }
 
-    // MARK: - Drag body
+    private var deleteButton: some View {
+        Button {
+            appState.removePlacement(id: placement.id)
+        } label: {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 15, weight: .bold))
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(.white, Color.red)
+                .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+        }
+        .buttonStyle(.plain)
+        .help("Delete")
+        .offset(x: 9, y: -9)
+    }
+
+    private var resizeHandle: some View {
+        // Small design-tool corner knob centered on the corner, with a
+        // generous invisible hit area around it.
+        Circle()
+            .fill(Color.white)
+            .overlay(Circle().stroke(Color.accentColor, lineWidth: 1.5))
+            .frame(width: 11, height: 11)
+            .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+            .padding(9)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering, dragStart == nil { NSCursor.crosshair.set() }
+            }
+            .highPriorityGesture(resizeDrag)
+            .offset(x: 14, y: 14)
+    }
+
+    // MARK: - Gestures
+
+    private var selectTap: some Gesture {
+        TapGesture().onEnded {
+            appState.selectedPlacementID = placement.id
+            if case .checkbox(let isChecked) = placement.content {
+                appState.updateContent(id: placement.id, content: .checkbox(isChecked: !isChecked))
+            }
+        }
+    }
+
+    private var editTap: some Gesture {
+        TapGesture(count: 2).onEnded {
+            guard placement.content.isTextEditable else { return }
+            appState.selectedPlacementID = placement.id
+            appState.editingPlacementID = placement.id
+        }
+    }
 
     private var bodyDrag: some Gesture {
-        // minimumDistance 4 leaves clicks for the tap gesture and text
-        // field focus; nudges still register at very low thresholds.
-        DragGesture(minimumDistance: 4)
+        // minimumDistance leaves plain clicks for selection; the named
+        // coordinate space keeps the translation stable while the view
+        // itself moves.
+        DragGesture(minimumDistance: 3, coordinateSpace: .named(PDFPreviewView.pageSpaceName))
             .onChanged { value in
                 if dragStart == nil {
                     dragStart = pixelRect
+                    preDragPlacements = appState.placements
                     appState.selectedPlacementID = placement.id
+                    NSCursor.closedHand.set()
                 }
                 guard let start = dragStart else { return }
-                let newOrigin = CGPoint(
-                    x: start.origin.x + value.translation.width,
-                    y: start.origin.y + value.translation.height
+                emitLive(
+                    origin: CGPoint(
+                        x: start.origin.x + value.translation.width,
+                        y: start.origin.y + value.translation.height
+                    ),
+                    size: start.size
                 )
-                emit(origin: newOrigin, size: start.size)
             }
-            .onEnded { _ in dragStart = nil }
-    }
-
-    // MARK: - Resize handle
-
-    private var resizeHandle: some View {
-        // Roomy, obviously grabbable knob at the bottom-right corner.
-        // The 10pt padding around the 18pt symbol gives a ~38pt hit
-        // target that straddles the corner — half inside the frame for
-        // visibility, half outside so a thumb-tip can grab it on small
-        // placements. `.highPriorityGesture` ensures the parent body
-        // drag never steals the resize touch.
-        Image(systemName: "arrow.down.right.square.fill")
-            .font(.system(size: 18, weight: .bold))
-            .symbolRenderingMode(.palette)
-            .foregroundStyle(.white, Color.accentColor)
-            .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
-            .padding(10)
-            .contentShape(Rectangle())
-            .highPriorityGesture(resizeDrag)
+            .onEnded { _ in finishDrag(label: "Move") }
     }
 
     private var resizeDrag: some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(PDFPreviewView.pageSpaceName))
             .onChanged { value in
                 if dragStart == nil {
                     dragStart = pixelRect
+                    preDragPlacements = appState.placements
                     appState.selectedPlacementID = placement.id
                 }
                 guard let start = dragStart else { return }
-                let keepAspect = placement.content.isImageBacked
-                let minSide: CGFloat = 24
+                let keepAspect = placement.content.keepsAspectRatio
+                let minSide: CGFloat = 18
                 let proposedW = max(minSide, start.width + value.translation.width)
-                let maxW = pageSize.width - start.origin.x
-                var newW = min(proposedW, maxW)
+                var newW = min(proposedW, pageSize.width - start.origin.x)
 
                 let newH: CGFloat
                 if keepAspect, start.height > 0 {
@@ -195,20 +291,26 @@ struct PlacementView: View {
                     newW = newH * aspect
                 } else {
                     let proposedH = max(minSide, start.height + value.translation.height)
-                    let maxH = pageSize.height - start.origin.y
-                    newH = min(proposedH, maxH)
+                    newH = min(proposedH, pageSize.height - start.origin.y)
                 }
-                emit(origin: start.origin, size: CGSize(width: newW, height: newH))
+                emitLive(origin: start.origin, size: CGSize(width: newW, height: newH))
             }
-            .onEnded { _ in
-                dragStart = nil
-                appState.commitPlacementSize(id: placement.id)
-            }
+            .onEnded { _ in finishDrag(label: "Resize") }
+    }
+
+    private func finishDrag(label: String) {
+        if let before = preDragPlacements {
+            appState.finishInteraction(label: label, before: before)
+        }
+        dragStart = nil
+        preDragPlacements = nil
+        appState.commitPlacementSize(id: placement.id)
+        NSCursor.arrow.set()
     }
 
     // MARK: - Normalize + emit
 
-    private func emit(origin: CGPoint, size: CGSize) {
+    private func emitLive(origin: CGPoint, size: CGSize) {
         guard pageSize.width > 0, pageSize.height > 0 else { return }
         let clampedX = min(max(origin.x, 0), max(0, pageSize.width - size.width))
         let clampedY = min(max(origin.y, 0), max(0, pageSize.height - size.height))
@@ -218,6 +320,6 @@ struct PlacementView: View {
             width: size.width / pageSize.width,
             height: size.height / pageSize.height
         )
-        appState.updatePlacement(id: placement.id, normalizedRect: normalized)
+        appState.updatePlacementLive(id: placement.id, normalizedRect: normalized)
     }
 }

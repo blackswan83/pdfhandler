@@ -3,9 +3,16 @@
 //  PDFHandler
 //
 //  Thin wrapper over AppKit's UndoManager that operates on our
-//  Placement array. Every placement mutation (add, update, delete)
-//  goes through one of the three entry points below, which also
-//  registers the inverse operation so ⌘Z / ⌘⇧Z just work.
+//  Placement array. Every placement mutation goes through one of the
+//  entry points below, which also registers the inverse operation so
+//  ⌘Z / ⌘⇧Z just work.
+//
+//  The undo handlers run SYNCHRONOUSLY: UndoManager decides whether a
+//  registerUndo call belongs to the undo or the redo stack from its
+//  isUndoing/isRedoing state *at call time*. Deferring the handler to
+//  a Task would re-register after undo() returned, putting the inverse
+//  on the undo stack again — redo would never work and undo would just
+//  toggle one step back and forth.
 //
 
 import Foundation
@@ -32,13 +39,35 @@ final class UndoCoordinator {
     func undo() { manager.undo() }
     func redo() { manager.redo() }
 
+    /// Drop the whole stack. Called when the placement world changes
+    /// out from under it (new document opened, library entry deleted)
+    /// so undo can never resurrect placements that reference stale
+    /// documents or deleted signatures.
+    func reset() { manager.removeAllActions() }
+
     /// Register any mutation by snapshotting the current placements,
     /// applying the change, and queuing the snapshot as the inverse.
     func apply(_ label: String, _ mutate: () -> Void) {
         let snapshot = placements()
         mutate()
+        registerReplacement(label, snapshot: snapshot)
+    }
+
+    /// Register a single undo step for a mutation that already
+    /// happened, using a snapshot captured before it began. This is
+    /// how drags, resizes and text-edit sessions record ONE step at
+    /// the end instead of one per mouse tick / keystroke.
+    func commit(_ label: String, before snapshot: [Placement]) {
+        registerReplacement(label, snapshot: snapshot)
+    }
+
+    // MARK: - Internals
+
+    private func registerReplacement(_ label: String, snapshot: [Placement]) {
         manager.registerUndo(withTarget: self) { target in
-            Task { @MainActor in
+            // UndoManager fires this on the thread that calls undo()/
+            // redo() — always the main thread here.
+            assumingMainActor {
                 target.applyReplacement(label, snapshot: snapshot)
             }
         }
@@ -48,11 +77,6 @@ final class UndoCoordinator {
     private func applyReplacement(_ label: String, snapshot: [Placement]) {
         let current = placements()
         replace(snapshot)
-        manager.registerUndo(withTarget: self) { target in
-            Task { @MainActor in
-                target.applyReplacement(label, snapshot: current)
-            }
-        }
-        manager.setActionName(label)
+        registerReplacement(label, snapshot: current)
     }
 }

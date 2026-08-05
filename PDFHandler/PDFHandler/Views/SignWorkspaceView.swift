@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 
 struct SignWorkspaceView: View {
     @EnvironmentObject var appState: AppState
+    @State private var keyMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,6 +33,56 @@ struct SignWorkspaceView: View {
             } else if let saved = appState.lastSavedURL {
                 banner("Saved to \(saved.lastPathComponent)", style: .info)
             }
+        }
+        .onAppear { installKeyMonitor() }
+        .onDisappear { removeKeyMonitor() }
+    }
+
+    // MARK: - Keyboard (⌫ delete, Esc deselect, arrow nudge)
+
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            assumingMainActor { handleKeyDown(event) } ? nil : event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+        }
+    }
+
+    @MainActor
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard appState.mode == .sign else { return false }
+        // Stay out of the way while a sheet is up or while any text
+        // field (the window's field editor) has focus.
+        guard event.window?.sheetParent == nil else { return false }
+        if NSApp.keyWindow?.firstResponder is NSTextView { return false }
+        guard appState.selectedPlacementID != nil else { return false }
+
+        switch event.keyCode {
+        case 51, 117: // delete / forward delete
+            appState.removeSelectedPlacement()
+            return true
+        case 53: // escape
+            appState.selectedPlacementID = nil
+            return true
+        case 123, 124, 125, 126: // ← → ↓ ↑
+            let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
+            let (dx, dy): (CGFloat, CGFloat)
+            switch event.keyCode {
+            case 123: (dx, dy) = (-step, 0)
+            case 124: (dx, dy) = (step, 0)
+            case 125: (dx, dy) = (0, step)
+            default:  (dx, dy) = (0, -step)
+            }
+            appState.nudgeSelectedPlacement(dxPoints: dx, dyPoints: dy)
+            return true
+        default:
+            return false
         }
     }
 

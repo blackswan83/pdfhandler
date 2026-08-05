@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 @main
 struct PDFHandlerApp: App {
@@ -34,12 +35,24 @@ struct PDFHandlerApp: App {
                 .keyboardShortcut("s", modifiers: .command)
             }
             CommandGroup(replacing: .undoRedo) {
+                // While a text field is being edited, ⌘Z belongs to the
+                // field editor; otherwise it drives placement undo.
                 Button("Undo") {
-                    NotificationCenter.default.post(name: .requestUndo, object: nil)
+                    if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+                       let undoManager = textView.undoManager, undoManager.canUndo {
+                        undoManager.undo()
+                    } else {
+                        NotificationCenter.default.post(name: .requestUndo, object: nil)
+                    }
                 }
                 .keyboardShortcut("z", modifiers: .command)
                 Button("Redo") {
-                    NotificationCenter.default.post(name: .requestRedo, object: nil)
+                    if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+                       let undoManager = textView.undoManager, undoManager.canRedo {
+                        undoManager.redo()
+                    } else {
+                        NotificationCenter.default.post(name: .requestRedo, object: nil)
+                    }
                 }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
             }

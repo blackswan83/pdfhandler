@@ -50,7 +50,22 @@ final class AppState: ObservableObject {
     // MARK: PDF (Sign mode)
     @Published var documentURL: URL?
     @Published var document: PDFDocument?
-    @Published var currentPageIndex: Int = 0
+    /// Changes on every (re)open; used to invalidate the preview cache.
+    @Published private(set) var documentID = UUID()
+    @Published var currentPageIndex: Int = 0 {
+        didSet {
+            guard oldValue != currentPageIndex else { return }
+            // Leaving a page ends any text edit and drops a selection
+            // that would otherwise be invisibly acted on (Delete key,
+            // nudges) from another page.
+            editingPlacementID = nil
+            if let id = selectedPlacementID,
+               let placement = placements.first(where: { $0.id == id }),
+               placement.pageIndex != currentPageIndex {
+                selectedPlacementID = nil
+            }
+        }
+    }
 
     // MARK: Signature library (Sign mode)
     @Published private(set) var signatures: [SavedSignature] = []
@@ -64,7 +79,41 @@ final class AppState: ObservableObject {
     // MARK: Placements (Sign mode)
     @Published var placements: [Placement] = []
     @Published var activeTool: FieldTool = .signature
-    @Published var selectedPlacementID: UUID?
+    @Published var selectedPlacementID: UUID? {
+        didSet {
+            guard oldValue != selectedPlacementID else { return }
+            // Selecting a different placement (or nothing) ends an
+            // in-progress text edit on the previous one.
+            if let editing = editingPlacementID, editing != selectedPlacementID {
+                editingPlacementID = nil
+            }
+        }
+    }
+
+    /// The text placement currently being edited inline (nil when no
+    /// edit session is active). Setting it manages the undo snapshot:
+    /// the whole edit session becomes a single undo step.
+    @Published var editingPlacementID: UUID? {
+        didSet {
+            guard oldValue != editingPlacementID else { return }
+            if oldValue == nil, editingPlacementID != nil {
+                textEditSnapshot = placements
+            } else if editingPlacementID == nil {
+                if let snapshot = textEditSnapshot {
+                    finishInteraction(label: "Edit Text", before: snapshot)
+                }
+                textEditSnapshot = nil
+            } else {
+                // Switched directly from one edit to another: close
+                // out the previous session and start a fresh one.
+                if let snapshot = textEditSnapshot {
+                    finishInteraction(label: "Edit Text", before: snapshot)
+                }
+                textEditSnapshot = placements
+            }
+        }
+    }
+    private var textEditSnapshot: [Placement]?
 
     // MARK: Remembered placement sizes (persisted across launches)
     // Normalized 0…1 against page bounds. Width is enough for image-
@@ -76,8 +125,9 @@ final class AppState: ObservableObject {
     @AppStorage("lastSize.date.h")      private var lastSizeDateH:      Double = 0.035
     @AppStorage("lastSize.freeText.w")  private var lastSizeFreeTextW:  Double = 0.22
     @AppStorage("lastSize.freeText.h")  private var lastSizeFreeTextH:  Double = 0.04
+    // Checkbox height is always derived from width + page aspect so
+    // the box stays square in page points.
     @AppStorage("lastSize.checkbox.w")  private var lastSizeCheckboxW:  Double = 0.03
-    @AppStorage("lastSize.checkbox.h")  private var lastSizeCheckboxH:  Double = 0.03
 
     // MARK: Compress mode
     @Published var compressSourceURL: URL?
@@ -159,11 +209,15 @@ final class AppState: ObservableObject {
         }
         documentURL = url
         document = pdf
+        documentID = UUID()
         currentPageIndex = 0
         placements.removeAll()
         selectedPlacementID = nil
+        editingPlacementID = nil
+        textEditSnapshot = nil
         lastSavedURL = nil
         errorMessage = nil
+        undoCoordinator.reset()
     }
 
     // MARK: - Library
@@ -181,9 +235,10 @@ final class AppState: ObservableObject {
         )
         signatures.insert(entry, at: 0)
         library.save(signatures)
+        // A freshly added asset is what the user wants to place next.
         switch role {
-        case .signature: if activeSignatureID == nil { activeSignatureID = entry.id }
-        case .initials:  if activeInitialsID  == nil { activeInitialsID  = entry.id }
+        case .signature: activeSignatureID = entry.id
+        case .initials:  activeInitialsID  = entry.id
         }
     }
 
@@ -196,6 +251,9 @@ final class AppState: ObservableObject {
         case .signature: if activeSignatureID == id { activeSignatureID = signatures(role: .signature).first?.id }
         case .initials:  if activeInitialsID  == id { activeInitialsID  = signatures(role: .initials ).first?.id }
         }
+        // Undo could otherwise restore placements that reference the
+        // deleted image; the flattener would then refuse to save.
+        undoCoordinator.reset()
     }
 
     // MARK: - Placements
@@ -211,36 +269,42 @@ final class AppState: ObservableObject {
         let (content, size): (PlacementContent, CGSize) = {
             switch activeTool {
             case .signature:
-                guard let id = activeSignatureID else { return (.freeText(text: "", fontSize: 14), .zero) }
+                guard let id = activeSignatureID else { return (.freeText(text: ""), .zero) }
                 return (.signature(signatureID: id),
                         imageSize(widthFraction: lastSizeSignatureW, signatureID: id))
             case .initials:
-                guard let id = activeInitialsID else { return (.freeText(text: "", fontSize: 14), .zero) }
+                guard let id = activeInitialsID else { return (.freeText(text: ""), .zero) }
                 return (.initials(signatureID: id),
                         imageSize(widthFraction: lastSizeInitialsW, signatureID: id))
             case .date:
                 return (.date(text: todayText()),
                         CGSize(width: lastSizeDateW, height: lastSizeDateH))
             case .freeText:
-                return (.freeText(text: "Text", fontSize: 14),
+                // Empty text: the preview shows a placeholder and the
+                // flattener skips empty fields, so an untouched box
+                // never burns literal filler into the document.
+                return (.freeText(text: ""),
                         CGSize(width: lastSizeFreeTextW, height: lastSizeFreeTextH))
             case .checkbox:
+                // Height derived from width so the box is square in
+                // page points regardless of the page's aspect ratio.
+                let aspect = currentPageAspect()
                 return (.checkbox(isChecked: false),
-                        CGSize(width: lastSizeCheckboxW, height: lastSizeCheckboxH))
+                        CGSize(width: lastSizeCheckboxW, height: lastSizeCheckboxW * aspect))
             }
         }()
 
         if size == .zero { return } // active tool has no asset selected
 
-        let halfW = size.width / 2
-        let halfH = size.height / 2
-        let x = min(max(normalizedPoint.x - halfW, 0), 1 - size.width)
-        let y = min(max(normalizedPoint.y - halfH, 0), 1 - size.height)
+        let w = min(size.width, 1)
+        let h = min(size.height, 1)
+        let x = min(max(normalizedPoint.x - w / 2, 0), 1 - w)
+        let y = min(max(normalizedPoint.y - h / 2, 0), 1 - h)
 
         let placement = Placement(
             content: content,
             pageIndex: pageIndex,
-            normalizedRect: CGRect(x: x, y: y, width: size.width, height: size.height)
+            normalizedRect: CGRect(x: x, y: y, width: w, height: h)
         )
 
         undoCoordinator.apply("Add \(activeTool.displayName)") {
@@ -249,11 +313,19 @@ final class AppState: ObservableObject {
         }
     }
 
-    func updatePlacement(id: UUID, normalizedRect: CGRect) {
+    /// Live mutation during a drag / resize. Registers NO undo step —
+    /// the owning gesture captures a snapshot when it starts and calls
+    /// finishInteraction(label:before:) once when it ends.
+    func updatePlacementLive(id: UUID, normalizedRect: CGRect) {
         guard let idx = placements.firstIndex(where: { $0.id == id }) else { return }
-        undoCoordinator.apply("Move / Resize") {
-            placements[idx].normalizedRect = normalizedRect
-        }
+        placements[idx].normalizedRect = normalizedRect
+    }
+
+    /// Close out a live interaction (drag, resize, text-edit session)
+    /// as a single undo step. No-op if nothing actually changed.
+    func finishInteraction(label: String, before snapshot: [Placement]) {
+        guard snapshot != placements else { return }
+        undoCoordinator.commit(label, before: snapshot)
     }
 
     /// Called when a drag/resize finishes. Persists the new size so the
@@ -268,10 +340,11 @@ final class AppState: ObservableObject {
         case .initials:  lastSizeInitialsW  = w
         case .date:      lastSizeDateW = w; lastSizeDateH = h
         case .freeText:  lastSizeFreeTextW = w; lastSizeFreeTextH = h
-        case .checkbox:  lastSizeCheckboxW = w; lastSizeCheckboxH = h
+        case .checkbox:  lastSizeCheckboxW = w
         }
     }
 
+    /// One-shot content change (checkbox toggle): registers an undo step.
     func updateContent(id: UUID, content: PlacementContent) {
         guard let idx = placements.firstIndex(where: { $0.id == id }) else { return }
         undoCoordinator.apply("Edit Field") {
@@ -279,26 +352,65 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Live content change during a text-edit session; undo for the
+    /// whole session is handled by editingPlacementID's snapshot.
+    func updateContentLive(id: UUID, content: PlacementContent) {
+        guard let idx = placements.firstIndex(where: { $0.id == id }) else { return }
+        placements[idx].content = content
+    }
+
     func removePlacement(id: UUID) {
+        if editingPlacementID == id { editingPlacementID = nil }
         undoCoordinator.apply("Delete") {
             placements.removeAll { $0.id == id }
             if selectedPlacementID == id { selectedPlacementID = nil }
         }
     }
 
+    func removeSelectedPlacement() {
+        guard let id = selectedPlacementID else { return }
+        removePlacement(id: id)
+    }
+
+    /// Arrow-key nudge of the selected placement, in page points.
+    func nudgeSelectedPlacement(dxPoints: CGFloat, dyPoints: CGFloat) {
+        guard let id = selectedPlacementID,
+              let idx = placements.firstIndex(where: { $0.id == id }),
+              let page = document?.page(at: placements[idx].pageIndex)
+        else { return }
+        let size = page.displaySize
+        guard size.width > 0, size.height > 0 else { return }
+
+        var rect = placements[idx].normalizedRect
+        rect.origin.x = min(max(rect.origin.x + dxPoints / size.width, 0), max(0, 1 - rect.width))
+        rect.origin.y = min(max(rect.origin.y + dyPoints / size.height, 0), max(0, 1 - rect.height))
+        guard rect != placements[idx].normalizedRect else { return }
+        undoCoordinator.apply("Nudge") {
+            placements[idx].normalizedRect = rect
+        }
+    }
+
     /// Copy a placement to every page of the document. Useful for
-    /// initials or a date stamp on multi-page contracts.
+    /// initials or a date stamp on multi-page contracts. Idempotent:
+    /// pages that already carry an identical copy are skipped.
     func applyToEveryPage(id: UUID) {
         guard let original = placements.first(where: { $0.id == id }),
               let pageCount = document?.pageCount else { return }
+        let targets = (0..<pageCount).filter { pageIndex in
+            pageIndex != original.pageIndex && !placements.contains {
+                $0.pageIndex == pageIndex
+                    && $0.content == original.content
+                    && $0.normalizedRect == original.normalizedRect
+            }
+        }
+        guard !targets.isEmpty else { return }
         undoCoordinator.apply("Apply to Every Page") {
-            for pageIndex in 0..<pageCount where pageIndex != original.pageIndex {
-                let copy = Placement(
+            for pageIndex in targets {
+                placements.append(Placement(
                     content: original.content,
                     pageIndex: pageIndex,
                     normalizedRect: original.normalizedRect
-                )
-                placements.append(copy)
+                ))
             }
         }
     }
@@ -314,11 +426,22 @@ final class AppState: ObservableObject {
             errorMessage = "No document open."
             return
         }
+        guard !placements.isEmpty else {
+            errorMessage = "Place at least one field before saving."
+            return
+        }
+        editingPlacementID = nil // commit any in-progress text edit
         do {
             let output = try flattener.flatten(source: source, placements: placements, signatures: signatures)
             lastSavedURL = output
             errorMessage = nil
             NSWorkspace.shared.activateFileViewerSelecting([output])
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if let self, self.lastSavedURL == output {
+                    self.lastSavedURL = nil
+                }
+            }
         } catch {
             errorMessage = error.localizedDescription
             lastSavedURL = nil
@@ -484,13 +607,16 @@ final class AppState: ObservableObject {
             let s = image.size
             return (s.width > 0 && s.height > 0) ? s.width / s.height : 3.0
         }()
-        let pageAspect: CGFloat = {
-            guard let page = document?.page(at: currentPageIndex) else { return 8.5 / 11.0 }
-            let b = page.bounds(for: .mediaBox)
-            return (b.width > 0 && b.height > 0) ? b.width / b.height : 8.5 / 11.0
-        }()
-        let heightFraction = CGFloat(clampedW) / imageAspect * pageAspect
-        return CGSize(width: CGFloat(clampedW), height: heightFraction)
+        let heightFraction = CGFloat(clampedW) / imageAspect * currentPageAspect()
+        return CGSize(width: CGFloat(clampedW), height: min(heightFraction, 1.0))
+    }
+
+    /// Width / height of the current page as displayed (rotation
+    /// applied). Falls back to US-letter portrait.
+    private func currentPageAspect() -> CGFloat {
+        guard let page = document?.page(at: currentPageIndex) else { return 8.5 / 11.0 }
+        let size = page.displaySize
+        return (size.width > 0 && size.height > 0) ? size.width / size.height : 8.5 / 11.0
     }
 
     private func defaultSignatureName(role: SavedSignatureRole) -> String {

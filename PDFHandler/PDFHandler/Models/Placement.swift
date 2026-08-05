@@ -13,17 +13,36 @@ import CoreGraphics
 
 /// What a placement actually contains. Signatures / initials reference
 /// a library image; date / freeText hold inline text; checkbox holds
-/// a boolean.
-enum PlacementContent {
+/// a boolean. Text kinds render at a font size derived from the box
+/// height (in both preview and burn-in), so resizing the box resizes
+/// the text.
+enum PlacementContent: Equatable {
     case signature(signatureID: UUID)
     case initials(signatureID: UUID)
     case date(text: String)
-    case freeText(text: String, fontSize: CGFloat)
+    case freeText(text: String)
     case checkbox(isChecked: Bool)
 
     var isImageBacked: Bool {
         switch self {
         case .signature, .initials: return true
+        default: return false
+        }
+    }
+
+    /// Whether resizing should preserve the box's aspect ratio.
+    /// Image-backed kinds keep the asset's aspect; checkboxes stay
+    /// square.
+    var keepsAspectRatio: Bool {
+        switch self {
+        case .signature, .initials, .checkbox: return true
+        default: return false
+        }
+    }
+
+    var isTextEditable: Bool {
+        switch self {
+        case .date, .freeText: return true
         default: return false
         }
     }
@@ -37,11 +56,11 @@ enum PlacementContent {
 }
 
 /// A single placed field on a PDF page. Coordinates are normalized
-/// 0…1 against the page's mediaBox so the same placement renders
-/// correctly at any preview scale and maps cleanly to PDF coordinates
-/// at export time. Top-left origin (SwiftUI convention); the signer
-/// flips Y when writing to PDF space.
-struct Placement: Identifiable {
+/// 0…1 against the page's displayed bounds so the same placement
+/// renders correctly at any preview scale and maps cleanly to PDF
+/// coordinates at export time. Top-left origin (SwiftUI convention);
+/// the flattener flips Y when writing to PDF space.
+struct Placement: Identifiable, Equatable {
     let id: UUID
     var content: PlacementContent
     var pageIndex: Int           // 0-based

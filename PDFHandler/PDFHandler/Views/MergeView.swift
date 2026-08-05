@@ -202,11 +202,18 @@ struct MergeView: View {
                 acceptedAny = true
                 group.enter()
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
-                    defer { group.leave() }
                     guard let data = data as? Data,
                           let url = URL(dataRepresentation: data, relativeTo: nil),
-                          url.pathExtension.lowercased() == "pdf" else { return }
-                    collected.append(url)
+                          url.pathExtension.lowercased() == "pdf" else {
+                        group.leave()
+                        return
+                    }
+                    // Providers call back on arbitrary queues; serialize
+                    // the shared array through the main queue.
+                    DispatchQueue.main.async {
+                        collected.append(url)
+                        group.leave()
+                    }
                 }
             }
         }
