@@ -143,7 +143,7 @@ actor CompressionService {
         guard FileManager.default.isReadableFile(atPath: pdfURL.path) else {
             throw CompressionError.invalidInput
         }
-        guard let gsPath = Self.findGhostscript() else {
+        guard let gs = Self.locateGhostscript() else {
             throw CompressionError.ghostscriptNotFound
         }
 
@@ -158,7 +158,7 @@ actor CompressionService {
 
         if let targetFraction {
             let outcome = try await searchForTarget(
-                gsPath: gsPath,
+                gs: gs,
                 pdfURL: pdfURL,
                 outputURL: outputURL,
                 preset: preset,
@@ -172,7 +172,7 @@ actor CompressionService {
             missedTarget = outcome.missedTarget
         } else {
             try await runGhostscript(
-                path: gsPath,
+                gs: gs,
                 arguments: Self.buildArguments(
                     input: pdfURL.path,
                     output: outputURL.path,
@@ -209,7 +209,7 @@ actor CompressionService {
     }
 
     private func searchForTarget(
-        gsPath: String,
+        gs: GhostscriptLocation,
         pdfURL: URL,
         outputURL: URL,
         preset: GhostscriptPreset,
@@ -238,7 +238,7 @@ actor CompressionService {
             let candidate = scratch.appendingPathComponent("pass-\(pass).pdf")
 
             try await runGhostscript(
-                path: gsPath,
+                gs: gs,
                 arguments: Self.buildArguments(
                     input: pdfURL.path,
                     output: candidate.path,
@@ -286,15 +286,22 @@ actor CompressionService {
     // MARK: - Ghostscript invocation
 
     private func runGhostscript(
-        path: String,
+        gs: GhostscriptLocation,
         arguments: [String],
         progressHandler: @escaping (Double) -> Void
     ) async throws {
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
+            process.executableURL = URL(fileURLWithPath: gs.executablePath)
             process.arguments = arguments
+            if let resourcePath = gs.resourcePath {
+                // A bundled, non-static gs cannot initialize without
+                // its Resource tree (gs_init.ps, fonts, ICC profiles).
+                var env = ProcessInfo.processInfo.environment
+                env["GS_LIB"] = resourcePath
+                process.environment = env
+            }
 
             let stderrPipe = Pipe()
             let stdoutPipe = Pipe()
@@ -453,7 +460,37 @@ actor CompressionService {
         return data.range(of: Data("/ByteRange".utf8)) != nil
     }
 
-    static func findGhostscript() -> String? {
+    /// Where the Ghostscript executable lives, plus its Resource
+    /// directory when we are running a bundled copy (a non-static gs
+    /// cannot initialize without gs_init.ps and friends).
+    struct GhostscriptLocation {
+        let executablePath: String
+        let resourcePath: String?
+    }
+
+    /// Locates Ghostscript, preferring a copy bundled inside the app.
+    ///
+    /// A bundled binary is version-matched to what the app was tested
+    /// against and removes the Homebrew prerequisite entirely. Note
+    /// that Ghostscript is AGPL: bundling it is fine for a private
+    /// build, but redistributing the result carries AGPL obligations
+    /// (see README). Nothing is bundled by default — this simply makes
+    /// a dropped-in copy work.
+    static func locateGhostscript() -> GhostscriptLocation? {
+        // Contents/MacOS/gs, with Contents/Resources/ghostscript as its
+        // Resource root.
+        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "gs")?.path,
+           FileManager.default.isExecutableFile(atPath: bundled) {
+            return GhostscriptLocation(executablePath: bundled, resourcePath: bundledResourcePath())
+        }
+        // Contents/Resources/ghostscript/bin/gs
+        if let resources = Bundle.main.resourceURL {
+            let nested = resources.appendingPathComponent("ghostscript/bin/gs").path
+            if FileManager.default.isExecutableFile(atPath: nested) {
+                return GhostscriptLocation(executablePath: nested, resourcePath: bundledResourcePath())
+            }
+        }
+
         let candidates = [
             "/opt/homebrew/bin/gs",
             "/usr/local/bin/gs",
@@ -462,9 +499,24 @@ actor CompressionService {
             "/sw/bin/gs"
         ]
         for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
+            return GhostscriptLocation(executablePath: candidate, resourcePath: nil)
         }
-        return resolveViaWhich()
+        return resolveViaWhich().map {
+            GhostscriptLocation(executablePath: $0, resourcePath: nil)
+        }
+    }
+
+    private static func bundledResourcePath() -> String? {
+        guard let resources = Bundle.main.resourceURL else { return nil }
+        let root = resources.appendingPathComponent("ghostscript/Resource")
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue
+        else { return nil }
+        return root.path
+    }
+
+    static func findGhostscript() -> String? {
+        locateGhostscript()?.executablePath
     }
 
     private static func resolveViaWhich() -> String? {
