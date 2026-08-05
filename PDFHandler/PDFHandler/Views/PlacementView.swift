@@ -293,7 +293,10 @@ struct PlacementView: View {
                 }
                 guard let start = dragStart else { return }
                 let keepAspect = placement.content.keepsAspectRatio
-                let minSide: CGFloat = 18
+                // 18pt keeps the field grabbable at the current zoom;
+                // the page-relative term stops a field made tiny while
+                // zoomed in from vanishing when zoomed back out.
+                let minSide = max(18, pageSize.width * 0.01)
                 let proposedW = max(minSide, start.width + value.translation.width)
                 var newW = min(proposedW, pageSize.width)
 

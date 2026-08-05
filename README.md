@@ -41,6 +41,7 @@ Then double-click to launch.
    - **Move** — drag the body. **Resize** — drag the corner knob (images and checkboxes keep their aspect; text boxes resize freely and the text scales with the box).
    - **Edit text** — double-click a Date or Free-text field, type, then press Return or click elsewhere.
    - **Keyboard** — ⌫ deletes the selected field, Esc deselects, arrow keys nudge by 1 pt (⇧-arrows by 10 pt).
+   - **Zoom** — ⌘+ / ⌘− to step, ⌘0 for actual size, ⌘9 to fit the window, or pinch on a trackpad. The toolbar shows the current level and lets you pick one directly. Zoom keeps the selected field centered, so you can zoom in to align a signature with a printed rule and nudge it into place.
    - Right-click for **Apply to every page** (handy for initials or a date stamp on long contracts).
 5. ⌘Z / ⌘⇧Z to undo / redo.
 6. ⌘S writes `<name>_signed.pdf` next to the original and reveals it in Finder. Fields are burned in permanently (flattened), so they show up in any PDF viewer.

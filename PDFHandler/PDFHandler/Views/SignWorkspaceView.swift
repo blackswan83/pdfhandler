@@ -57,9 +57,25 @@ struct SignWorkspaceView: View {
     @MainActor
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         guard appState.mode == .sign else { return false }
-        // Stay out of the way while a sheet is up or while any text
-        // field (the window's field editor) has focus.
+        // Stay out of the way while a sheet is up.
         guard event.window?.sheetParent == nil else { return false }
+
+        // Zoom. Command-modified keys never insert text, so these are
+        // safe to handle even while a field is being edited. Local
+        // monitors see the event before menu key equivalents, which is
+        // how ⌘= works as an alias for the menu's ⌘+.
+        if event.modifierFlags.contains(.command), appState.document != nil {
+            switch event.charactersIgnoringModifiers {
+            case "=", "+": appState.zoomIn();          return true
+            case "-":      appState.zoomOut();         return true
+            case "0":      appState.zoomToActualSize(); return true
+            case "9":      appState.zoomToFit();       return true
+            default: break
+            }
+        }
+
+        // Everything below drives the selected placement, so stay clear
+        // of the window's field editor.
         if NSApp.keyWindow?.firstResponder is NSTextView { return false }
         guard appState.selectedPlacementID != nil else { return false }
 
@@ -106,6 +122,7 @@ struct SignWorkspaceView: View {
 
             Spacer()
 
+            zoomControls
             pagePicker
 
             Button {
@@ -118,6 +135,45 @@ struct SignWorkspaceView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var zoomControls: some View {
+        if appState.document != nil {
+            HStack(spacing: 2) {
+                Button {
+                    appState.zoomOut()
+                } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!appState.canZoomOut)
+                .help("Zoom out (⌘−)")
+
+                Menu(appState.zoomLabel) {
+                    Button("Zoom to Fit") { appState.zoomToFit() }
+                    Button("Actual Size") { appState.zoomToActualSize() }
+                    Divider()
+                    ForEach(AppState.zoomStops, id: \.self) { stop in
+                        Button("\(Int(stop * 100))%") { appState.setZoom(stop) }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .frame(minWidth: 62)
+                .help("Zoom level")
+
+                Button {
+                    appState.zoomIn()
+                } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!appState.canZoomIn)
+                .help("Zoom in (⌘+)")
+            }
+            Divider().frame(height: 16)
+        }
     }
 
     @ViewBuilder

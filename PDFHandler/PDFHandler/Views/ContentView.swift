@@ -35,6 +35,18 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .requestRedo)) { _ in
             appState.undoCoordinator.redo()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .requestZoomIn)) { _ in
+            if appState.mode == .sign { appState.zoomIn() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .requestZoomOut)) { _ in
+            if appState.mode == .sign { appState.zoomOut() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .requestZoomActual)) { _ in
+            if appState.mode == .sign { appState.zoomToActualSize() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .requestZoomFit)) { _ in
+            if appState.mode == .sign { appState.zoomToFit() }
+        }
     }
 
     // MARK: - Sidebar

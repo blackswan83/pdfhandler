@@ -71,6 +71,33 @@ final class PDFHandlerTests: XCTestCase {
         XCTAssertNotEqual(placement, retyped)
     }
 
+    // MARK: - Zoom stepping
+
+    func testZoomStepsWalkTheStopsFromAnArbitraryFitScale() {
+        // Typical fit scale for a Letter page in a laptop-sized pane.
+        XCTAssertEqual(AppState.zoomStop(above: 0.78), 1.0)
+        XCTAssertEqual(AppState.zoomStop(below: 0.78), 0.75)
+
+        XCTAssertEqual(AppState.zoomStop(above: 1.0), 1.25)
+        XCTAssertEqual(AppState.zoomStop(below: 1.0), 0.75)
+    }
+
+    func testZoomStepsClampAtTheEnds() {
+        XCTAssertEqual(AppState.zoomStop(above: AppState.maxZoom), AppState.maxZoom)
+        XCTAssertEqual(AppState.zoomStop(below: AppState.minZoom), AppState.minZoom)
+    }
+
+    func testZoomStepsDoNotStickOnAnExactStop() {
+        // Landing exactly on a stop must still advance, not return the
+        // same value (the tolerance guards float noise, not progress).
+        for stop in AppState.zoomStops where stop < AppState.maxZoom {
+            XCTAssertGreaterThan(AppState.zoomStop(above: stop), stop)
+        }
+        for stop in AppState.zoomStops where stop > AppState.minZoom {
+            XCTAssertLessThan(AppState.zoomStop(below: stop), stop)
+        }
+    }
+
     func testContentTraits() {
         XCTAssertTrue(PlacementContent.signature(signatureID: UUID()).keepsAspectRatio)
         XCTAssertTrue(PlacementContent.checkbox(isChecked: false).keepsAspectRatio)

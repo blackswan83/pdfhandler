@@ -64,6 +64,8 @@ final class AppState: ObservableObject {
                placement.pageIndex != currentPageIndex {
                 selectedPlacementID = nil
             }
+            // Re-center the new page when zoomed in.
+            zoomToken &+= 1
         }
     }
 
@@ -114,6 +116,72 @@ final class AppState: ObservableObject {
         }
     }
     private var textEditSnapshot: [Placement]?
+
+    // MARK: Zoom (Sign mode)
+
+    /// Absolute page-point → screen-point scale, used once the user
+    /// takes manual control of the zoom level.
+    @Published private(set) var zoom: Double = 1.0
+    /// While true the preview uses the fit-to-window scale and follows
+    /// window resizes; any explicit zoom action turns it off.
+    @Published private(set) var isZoomFitted: Bool = true
+    /// Bumped by every discrete zoom action (and page change) so the
+    /// preview re-centers on the focus point. Pinch-zoom deliberately
+    /// does not bump it — the pinch already tracks the gesture.
+    @Published private(set) var zoomToken: Int = 0
+
+    /// The latest fit-to-window scale, recorded by the preview so that
+    /// stepping up from "Fit" starts at the right place. Deliberately
+    /// not @Published: it is derived from layout and must never
+    /// re-trigger layout.
+    private(set) var fittedScale: Double = 1.0
+
+    static let minZoom: Double = 0.25
+    static let maxZoom: Double = 6.0
+    static let zoomStops: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 6.0]
+
+    /// The scale actually on screen right now.
+    var effectiveZoom: Double { isZoomFitted ? fittedScale : zoom }
+
+    var zoomLabel: String {
+        isZoomFitted ? "Fit" : "\(Int((zoom * 100).rounded()))%"
+    }
+
+    var canZoomIn:  Bool { document != nil && effectiveZoom < Self.maxZoom - 0.001 }
+    var canZoomOut: Bool { document != nil && effectiveZoom > Self.minZoom + 0.001 }
+
+    func recordFittedScale(_ scale: Double) {
+        guard scale > 0 else { return }
+        fittedScale = scale
+    }
+
+    /// Set an absolute zoom level. `recenter: false` is for continuous
+    /// gestures, which must not fight the scroll position mid-pinch.
+    func setZoom(_ value: Double, recenter: Bool = true) {
+        zoom = min(max(value, Self.minZoom), Self.maxZoom)
+        isZoomFitted = false
+        if recenter { zoomToken &+= 1 }
+    }
+
+    func zoomIn()  { setZoom(Self.zoomStop(above: effectiveZoom)) }
+    func zoomOut() { setZoom(Self.zoomStop(below: effectiveZoom)) }
+    func zoomToActualSize() { setZoom(1.0) }
+
+    func zoomToFit() {
+        isZoomFitted = true
+        zoom = fittedScale
+        zoomToken &+= 1
+    }
+
+    /// Next stop above `value`, falling back to the ceiling. Pure so the
+    /// stepping behaviour is directly testable.
+    static func zoomStop(above value: Double) -> Double {
+        zoomStops.first { $0 > value * 1.005 } ?? maxZoom
+    }
+
+    static func zoomStop(below value: Double) -> Double {
+        zoomStops.last { $0 < value * 0.995 } ?? minZoom
+    }
 
     // MARK: Remembered placement sizes (persisted across launches)
     // Normalized 0…1 against page bounds. Width is enough for image-
@@ -229,6 +297,9 @@ final class AppState: ObservableObject {
         textEditSnapshot = nil
         lastSavedURL = nil
         errorMessage = nil
+        isZoomFitted = true
+        zoom = 1.0
+        zoomToken &+= 1
         undoCoordinator.reset()
     }
 

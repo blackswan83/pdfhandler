@@ -2,10 +2,12 @@
 //  PageImageCache.swift
 //  PDFHandler
 //
-//  Small cache for rendered page previews. PDFPreviewView's body is
+//  Cache for rendered page previews. PDFPreviewView's body is
 //  re-evaluated on every placement drag tick and every keystroke;
 //  without this cache the entire PDF page would be re-rasterized each
-//  time, which is what made dragging feel janky.
+//  time, which is what made dragging feel janky. Zooming multiplies
+//  the stakes — a zoomed page bitmap is tens of megabytes — so entries
+//  are bounded by real byte cost, not just count.
 //
 
 import AppKit
@@ -17,24 +19,25 @@ final class PageImageCache {
     private let cache = NSCache<NSString, NSImage>()
 
     private init() {
-        cache.countLimit = 16
+        cache.countLimit = 6
+        cache.totalCostLimit = 256 * 1024 * 1024
     }
 
-    /// Returns the cached image for (documentID, pageIndex, size,
-    /// scale), rendering and storing it on a miss. `documentID`
-    /// changes whenever a document is (re)opened, which implicitly
-    /// invalidates stale entries.
+    /// Returns the cached bitmap for (documentID, pageIndex, pixelSize),
+    /// rendering and storing it on a miss. `documentID` changes whenever
+    /// a document is (re)opened, which implicitly invalidates stale
+    /// entries.
     func image(
         documentID: UUID,
         pageIndex: Int,
-        size: CGSize,
-        scale: CGFloat,
+        pixelSize: CGSize,
         render: () -> NSImage
     ) -> NSImage {
-        let key = "\(documentID.uuidString)|\(pageIndex)|\(Int(size.width.rounded()))x\(Int(size.height.rounded()))@\(scale)" as NSString
+        let key = "\(documentID.uuidString)|\(pageIndex)|\(Int(pixelSize.width))x\(Int(pixelSize.height))" as NSString
         if let hit = cache.object(forKey: key) { return hit }
         let rendered = render()
-        cache.setObject(rendered, forKey: key)
+        let cost = Int(pixelSize.width * pixelSize.height) * 4  // RGBA bytes
+        cache.setObject(rendered, forKey: key, cost: cost)
         return rendered
     }
 }
