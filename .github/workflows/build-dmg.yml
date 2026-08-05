@@ -27,6 +27,11 @@ jobs:
           swift --version
           xcode-select -p
 
+      - name: Run tests
+        run: |
+          cd PDFHandler
+          swift test
+
       - name: Build DMG (capturing log)
         id: build
         run: |
