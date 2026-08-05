@@ -295,11 +295,11 @@ actor CompressionService {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: gs.executablePath)
             process.arguments = arguments
-            if let resourcePath = gs.resourcePath {
-                // A bundled, non-static gs cannot initialize without
-                // its Resource tree (gs_init.ps, fonts, ICC profiles).
+            if let libraryPath = gs.libraryPath {
+                // A bundled gs cannot initialize without its Resource
+                // tree (gs_init.ps, fonts, ICC profiles).
                 var env = ProcessInfo.processInfo.environment
-                env["GS_LIB"] = resourcePath
+                env["GS_LIB"] = libraryPath
                 process.environment = env
             }
 
@@ -460,12 +460,12 @@ actor CompressionService {
         return data.range(of: Data("/ByteRange".utf8)) != nil
     }
 
-    /// Where the Ghostscript executable lives, plus its Resource
-    /// directory when we are running a bundled copy (a non-static gs
-    /// cannot initialize without gs_init.ps and friends).
+    /// Where the Ghostscript executable lives, plus the GS_LIB search
+    /// path when we are running a bundled copy (gs cannot initialize
+    /// without finding Resource/Init/gs_init.ps).
     struct GhostscriptLocation {
         let executablePath: String
-        let resourcePath: String?
+        let libraryPath: String?
     }
 
     /// Locates Ghostscript, preferring a copy bundled inside the app.
@@ -477,18 +477,10 @@ actor CompressionService {
     /// (see README). Nothing is bundled by default — this simply makes
     /// a dropped-in copy work.
     static func locateGhostscript() -> GhostscriptLocation? {
-        // Contents/MacOS/gs, with Contents/Resources/ghostscript as its
-        // Resource root.
         if let bundled = Bundle.main.url(forAuxiliaryExecutable: "gs")?.path,
-           FileManager.default.isExecutableFile(atPath: bundled) {
-            return GhostscriptLocation(executablePath: bundled, resourcePath: bundledResourcePath())
-        }
-        // Contents/Resources/ghostscript/bin/gs
-        if let resources = Bundle.main.resourceURL {
-            let nested = resources.appendingPathComponent("ghostscript/bin/gs").path
-            if FileManager.default.isExecutableFile(atPath: nested) {
-                return GhostscriptLocation(executablePath: nested, resourcePath: bundledResourcePath())
-            }
+           FileManager.default.isExecutableFile(atPath: bundled),
+           let libraryPath = bundledLibraryPath() {
+            return GhostscriptLocation(executablePath: bundled, libraryPath: libraryPath)
         }
 
         let candidates = [
@@ -499,20 +491,29 @@ actor CompressionService {
             "/sw/bin/gs"
         ]
         for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
-            return GhostscriptLocation(executablePath: candidate, resourcePath: nil)
+            return GhostscriptLocation(executablePath: candidate, libraryPath: nil)
         }
         return resolveViaWhich().map {
-            GhostscriptLocation(executablePath: $0, resourcePath: nil)
+            GhostscriptLocation(executablePath: $0, libraryPath: nil)
         }
     }
 
-    private static func bundledResourcePath() -> String? {
+    /// GS_LIB for a bundled Ghostscript, laid out by build-dmg.sh at
+    /// Contents/Resources/ghostscript/{Resource,lib}. Returns nil when
+    /// nothing is bundled, so the bundled executable is only used when
+    /// its support files are actually present.
+    private static func bundledLibraryPath() -> String? {
         guard let resources = Bundle.main.resourceURL else { return nil }
-        let root = resources.appendingPathComponent("ghostscript/Resource")
+        let root = resources.appendingPathComponent("ghostscript")
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue
+        let initDir = root.appendingPathComponent("Resource/Init")
+        guard FileManager.default.fileExists(atPath: initDir.path, isDirectory: &isDir), isDir.boolValue
         else { return nil }
-        return root.path
+        return [
+            initDir.path,
+            root.appendingPathComponent("lib").path,
+            root.appendingPathComponent("Resource").path,
+        ].joined(separator: ":")
     }
 
     static func findGhostscript() -> String? {

@@ -112,6 +112,15 @@ if command -v actool >/dev/null 2>&1 && [[ -d "$ASSETS_SRC" ]]; then
     fi
 fi
 
+# Optionally vendor Ghostscript so the Compress tab needs no Homebrew.
+# OFF by default: Ghostscript is AGPL, and this repo is MIT and
+# publishes release DMGs from CI. See scripts/bundle-ghostscript.sh.
+if [[ "${BUNDLE_GHOSTSCRIPT:-0}" == "1" ]]; then
+    "$SCRIPT_DIR/bundle-ghostscript.sh" "$APP_BUNDLE"
+else
+    echo "==> Skipping Ghostscript bundling (set BUNDLE_GHOSTSCRIPT=1 to embed it)"
+fi
+
 echo "==> Ad-hoc codesigning"
 codesign --force --deep --sign - \
     --entitlements "$SRC_RESOURCES/PDFHandler.entitlements" \

@@ -58,11 +58,23 @@ Beyond the stock presets (which only *name* a resolution), the app enables image
 
 **Digitally signed PDFs:** compression rewrites the file and therefore breaks its cryptographic signature — that is inherent to re-compression, not specific to this app. The app detects signed input and warns before you run it. The original is never modified.
 
-Requires Ghostscript. The app detects it automatically at `/opt/homebrew/bin/gs`, `/usr/local/bin/gs`, `/usr/bin/gs`, `/opt/local/bin/gs`, `/sw/bin/gs`, or via `which gs`. If it's missing the compress pane shows a card with a one-click copy of:
+Requires Ghostscript. The app looks for a copy bundled inside the app first, then at `/opt/homebrew/bin/gs`, `/usr/local/bin/gs`, `/usr/bin/gs`, `/opt/local/bin/gs`, `/sw/bin/gs`, or via `which gs`. If it's missing the compress pane shows a card with a one-click copy of:
 
 ```bash
 brew install ghostscript
 ```
+
+### Embedding Ghostscript (optional, personal builds)
+
+To make Compress work with no Homebrew prerequisite on the machine you install to:
+
+```bash
+BUNDLE_GHOSTSCRIPT=1 ./scripts/build-dmg.sh
+```
+
+This vendors the `gs` on your build machine into the app: the executable into `Contents/MacOS/`, every non-system dylib it needs (transitively) into `Contents/Frameworks/` with load commands rewritten to `@executable_path`, and the `Resource/` tree into `Contents/Resources/ghostscript/`. Adds roughly 30–50 MB.
+
+**It is off by default, deliberately.** Ghostscript is AGPLv3. Copyleft attaches to *distribution*, not to use — a build you make and install on your own machine carries no obligation whatsoever. But publishing the result to anyone else does: Artifex's position is that shipping Ghostscript with an application requires that application to be AGPL as well, or a commercial licence from them. This repo is MIT and its CI publishes release DMGs, so the default build produces no Ghostscript inside the app. Leave it that way unless you have relicensed the project or hold a commercial licence.
 
 ### Merge
 
