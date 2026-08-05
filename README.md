@@ -37,9 +37,13 @@ Then double-click to launch.
    - **Paste** — whatever image is on the clipboard (⌘V).
 2. Open a PDF (⌘O, or drop it onto the window).
 3. Pick a field type in the palette above the preview: **Signature**, **Initials**, **Date**, **Free text**, **Checkbox**.
-4. Click on the page to drop a placement. Drag the body to move it, drag the bottom-right handle to resize. Right-click for **Apply to every page** (handy for initials or a date stamp on long contracts).
+4. Click on the page to drop a placement.
+   - **Move** — drag the body. **Resize** — drag the corner knob (images and checkboxes keep their aspect; text boxes resize freely and the text scales with the box).
+   - **Edit text** — double-click a Date or Free-text field, type, then press Return or click elsewhere.
+   - **Keyboard** — ⌫ deletes the selected field, Esc deselects, arrow keys nudge by 1 pt (⇧-arrows by 10 pt).
+   - Right-click for **Apply to every page** (handy for initials or a date stamp on long contracts).
 5. ⌘Z / ⌘⇧Z to undo / redo.
-6. ⌘S writes `<name>_signed.pdf` next to the original and reveals it in Finder.
+6. ⌘S writes `<name>_signed.pdf` next to the original and reveals it in Finder. Fields are burned in permanently (flattened), so they show up in any PDF viewer.
 
 Library lives at `~/Library/Application Support/PDFHandler/signatures.json`.
 

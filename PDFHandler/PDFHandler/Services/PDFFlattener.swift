@@ -22,12 +22,14 @@ import CoreText
 enum PDFFlattenerError: LocalizedError {
     case cannotOpen
     case unknownSignature(UUID)
+    case unreadableSignature(String)
     case writeFailed(URL)
 
     var errorDescription: String? {
         switch self {
         case .cannotOpen: return "Could not open the PDF."
         case .unknownSignature(let id): return "Signature \(id) is not in the library."
+        case .unreadableSignature(let name): return "The signature \"\(name)\" could not be read. Re-add it to the library."
         case .writeFailed(let url): return "Failed to write signed PDF to \(url.path)."
         }
     }
@@ -42,28 +44,33 @@ struct PDFFlattener {
         static let textInsetFactor: CGFloat = 0.12
     }
 
-    /// Writes a copy of `source` with every `placement` drawn into the
+    /// Writes a copy of the (in-memory) `document` — the exact pages
+    /// the user previewed — with every `placement` drawn into the
     /// page. Output name: `<original>_signed.pdf` next to the original.
     func flatten(
-        source: URL,
+        document: PDFDocument,
+        sourceURL: URL,
         placements: [Placement],
         signatures: [SavedSignature]
     ) throws -> URL {
-        guard let document = PDFDocument(url: source) else {
-            throw PDFFlattenerError.cannotOpen
-        }
-
         let byID = Dictionary(uniqueKeysWithValues: signatures.map { ($0.id, $0) })
 
-        // Fail fast on dangling signature references before touching disk.
+        // Fail fast on dangling or unreadable signature references so a
+        // field can never silently vanish from the signed output.
         for placement in placements {
-            if let sigID = placement.content.referencedSignatureID, byID[sigID] == nil {
-                throw PDFFlattenerError.unknownSignature(sigID)
+            if let sigID = placement.content.referencedSignatureID {
+                guard let entry = byID[sigID] else {
+                    throw PDFFlattenerError.unknownSignature(sigID)
+                }
+                guard let image = entry.image,
+                      image.cgImage(forProposedRect: nil, context: nil, hints: nil) != nil else {
+                    throw PDFFlattenerError.unreadableSignature(entry.name)
+                }
             }
         }
 
-        let baseName = source.deletingPathExtension().lastPathComponent
-        let outputURL = source
+        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+        let outputURL = sourceURL
             .deletingLastPathComponent()
             .appendingPathComponent("\(baseName)_signed.pdf")
 

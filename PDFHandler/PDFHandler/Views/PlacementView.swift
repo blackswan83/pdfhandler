@@ -128,11 +128,7 @@ struct PlacementView: View {
             }
 
         case .checkbox(let isChecked):
-            Image(systemName: isChecked ? "checkmark.square.fill" : "square")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .foregroundStyle(Color.black)
-                .padding(rect.height * 0.04)
+            CheckboxGlyph(isChecked: isChecked)
         }
     }
 
@@ -321,5 +317,42 @@ struct PlacementView: View {
             height: size.height / pageSize.height
         )
         appState.updatePlacementLive(id: placement.id, normalizedRect: normalized)
+    }
+}
+
+/// Vector checkbox drawn with the same proportions as the flattener's
+/// burn-in (PDFFlattener.drawCheckbox, y-flipped) so what the user
+/// approves on screen is exactly what lands in the saved PDF.
+private struct CheckboxGlyph: View {
+    let isChecked: Bool
+
+    var body: some View {
+        Canvas { ctx, size in
+            let side = min(size.width, size.height)
+            guard side > 1 else { return }
+            let inset = max(0.5, side * 0.08)
+            let box = CGRect(
+                x: (size.width - side) / 2 + inset,
+                y: (size.height - side) / 2 + inset,
+                width: side - inset * 2,
+                height: side - inset * 2
+            )
+            ctx.stroke(
+                Path(roundedRect: box, cornerRadius: side * 0.08),
+                with: .color(.black),
+                lineWidth: max(0.75, side * 0.05)
+            )
+            if isChecked {
+                var check = Path()
+                check.move(to: CGPoint(x: box.minX + box.width * 0.18, y: box.minY + box.height * 0.48))
+                check.addLine(to: CGPoint(x: box.minX + box.width * 0.42, y: box.minY + box.height * 0.70))
+                check.addLine(to: CGPoint(x: box.minX + box.width * 0.82, y: box.minY + box.height * 0.28))
+                ctx.stroke(
+                    check,
+                    with: .color(.black),
+                    style: StrokeStyle(lineWidth: max(1, side * 0.09), lineCap: .round, lineJoin: .round)
+                )
+            }
+        }
     }
 }

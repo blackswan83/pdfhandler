@@ -176,7 +176,21 @@ final class AppState: ObservableObject {
     private(set) lazy var undoCoordinator: UndoCoordinator = {
         UndoCoordinator(
             placements: { [weak self] in self?.placements ?? [] },
-            replace:    { [weak self] new in self?.placements = new }
+            replace:    { [weak self] new in
+                guard let self else { return }
+                self.placements = new
+                // Undo/redo can remove the selected or edited
+                // placement; drop dangling references so keyboard
+                // actions don't silently no-op.
+                if let selected = self.selectedPlacementID,
+                   !new.contains(where: { $0.id == selected }) {
+                    self.selectedPlacementID = nil
+                }
+                if let editing = self.editingPlacementID,
+                   !new.contains(where: { $0.id == editing }) {
+                    self.editingPlacementID = nil
+                }
+            }
         )
     }()
 
@@ -422,7 +436,7 @@ final class AppState: ObservableObject {
     // MARK: - Save (Sign mode)
 
     func saveSignedPDF() {
-        guard let source = documentURL else {
+        guard let source = documentURL, let document else {
             errorMessage = "No document open."
             return
         }
@@ -432,7 +446,7 @@ final class AppState: ObservableObject {
         }
         editingPlacementID = nil // commit any in-progress text edit
         do {
-            let output = try flattener.flatten(source: source, placements: placements, signatures: signatures)
+            let output = try flattener.flatten(document: document, sourceURL: source, placements: placements, signatures: signatures)
             lastSavedURL = output
             errorMessage = nil
             NSWorkspace.shared.activateFileViewerSelecting([output])
