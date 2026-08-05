@@ -91,6 +91,61 @@ jobs:
                   > /dev/null
           fi
 
+      - name: Capture screenshots
+        # Best-effort: GUI capture on a hosted runner can be blocked by
+        # TCC or run without a window server. Never fail the build for
+        # it — the DMG is the deliverable, screenshots are a bonus.
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p build/screenshots
+
+          # Populated demo state (synthetic agreement + placed fields).
+          open build/PDFHandler.app --args --screenshot-demo
+          sleep 12
+
+          osascript -e 'tell application "System Events" to set frontmost of process "PDFHandler" to true' || true
+          sleep 3
+
+          screencapture -x build/screenshots/01-sign-mode.png || true
+
+          # Window-only shot, cropping out the runner's desktop. Uses
+          # the window's geometry rather than `-l <id>`: System Events
+          # window ids are not CGWindowIDs, so -l would not match.
+          geom=$(osascript -e 'tell application "System Events" to tell process "PDFHandler" to get {position of window 1, size of window 1}' 2>/dev/null | tr -d ' ' || echo "")
+          if [[ "$geom" =~ ^-?[0-9]+,-?[0-9]+,[0-9]+,[0-9]+$ ]]; then
+            screencapture -x -R "$geom" build/screenshots/02-sign-window.png || true
+          else
+            echo "could not read window geometry: '$geom'"
+          fi
+
+          # Switch to Compress mode via the sidebar for a second view.
+          osascript <<'APPLESCRIPT' || true
+          tell application "System Events"
+            tell process "PDFHandler"
+              set frontmost to true
+              delay 1
+              try
+                click static text "Compress" of window 1
+              end try
+            end tell
+          end tell
+          APPLESCRIPT
+          sleep 2
+          screencapture -x build/screenshots/03-compress-mode.png || true
+
+          osascript -e 'tell application "PDFHandler" to quit' || killall PDFHandler || true
+          ls -la build/screenshots || true
+
+      - name: Upload screenshots
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: build/screenshots
+          if-no-files-found: warn
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4

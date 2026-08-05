@@ -327,6 +327,15 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Replaces the in-memory library without touching the on-disk
+    /// index. Used only by the --screenshot-demo development mode, so
+    /// running it can never disturb a real user's saved signatures.
+    func replaceLibraryInMemory(_ entries: [SavedSignature]) {
+        signatures = entries
+        activeSignatureID = entries.first(where: { $0.role == .signature })?.id
+        activeInitialsID  = entries.first(where: { $0.role == .initials  })?.id
+    }
+
     func deleteSignature(id: UUID) {
         let role = signatures.first(where: { $0.id == id })?.role ?? .signature
         signatures.removeAll { $0.id == id }

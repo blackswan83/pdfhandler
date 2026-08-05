@@ -23,6 +23,13 @@ struct ContentView: View {
             NewSignatureView()
                 .environmentObject(appState)
         }
+        .onAppear {
+            // Development scaffolding for CI screenshot capture; a
+            // no-op unless --screenshot-demo was passed at launch.
+            if ScreenshotDemo.isEnabled, appState.document == nil {
+                appState.loadScreenshotDemo()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .requestOpenPanel)) { _ in
             openPDFInCurrentMode()
         }
