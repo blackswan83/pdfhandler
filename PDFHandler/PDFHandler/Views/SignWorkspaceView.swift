@@ -105,22 +105,30 @@ struct SignWorkspaceView: View {
     // MARK: - Toolbar
 
     private var toolbar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button {
                 openPDF()
             } label: {
                 Label("Open PDF", systemImage: "folder")
             }
+            .layoutPriority(1)
 
             if let url = appState.documentURL {
+                // Lowest layout priority and a hard cap: at the 960pt
+                // minimum window width something has to give, and the
+                // filename is the one thing here that is disposable.
+                // Without this the Save button truncated instead.
                 Text(url.lastPathComponent)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .frame(maxWidth: 200)
+                    .layoutPriority(-1)
+                    .help(url.path)
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
             zoomControls
             pagePicker
@@ -132,6 +140,8 @@ struct SignWorkspaceView: View {
             }
             .keyboardShortcut("s", modifiers: .command)
             .disabled(appState.document == nil || appState.placements.isEmpty)
+            .fixedSize()
+            .layoutPriority(2)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -190,7 +200,8 @@ struct SignWorkspaceView: View {
 
                 Text("Page \(appState.currentPageIndex + 1) of \(pdf.pageCount)")
                     .font(.subheadline.monospacedDigit())
-                    .frame(minWidth: 120)
+                    .fixedSize()
+                    .frame(minWidth: 92)
 
                 Button {
                     appState.currentPageIndex = min(pdf.pageCount - 1, appState.currentPageIndex + 1)
