@@ -24,6 +24,18 @@ enum ScreenshotDemo {
         CommandLine.arguments.contains("--screenshot-demo")
     }
 
+    /// `--screenshot-mode compress` selects a tab deterministically.
+    /// Driving the sidebar through accessibility automation instead
+    /// proved unreliable — the click silently did nothing and CI
+    /// captured the same pane twice.
+    static var initialMode: AppMode? {
+        let args = CommandLine.arguments
+        guard let flag = args.firstIndex(of: "--screenshot-mode"),
+              args.index(after: flag) < args.endIndex
+        else { return nil }
+        return AppMode(rawValue: args[args.index(after: flag)])
+    }
+
     /// Draws a plausible two-page consulting agreement into a temp file
     /// so the preview has real page content to render.
     static func writeSampleAgreement() -> URL? {

@@ -28,6 +28,7 @@ struct ContentView: View {
             // no-op unless --screenshot-demo was passed at launch.
             if ScreenshotDemo.isEnabled, appState.document == nil {
                 appState.loadScreenshotDemo()
+                if let mode = ScreenshotDemo.initialMode { appState.mode = mode }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestOpenPanel)) { _ in
