@@ -2,15 +2,23 @@
 //  CompressionService.swift
 //  PDFHandler
 //
-//  PDF compression via the system Ghostscript binary. Shells out to
-//  `gs` with the classic four presets (prepress / printer / ebook /
-//  screen) plus a target-size ratio, grayscale and metadata toggles.
+//  PDF compression via the system Ghostscript binary.
+//
+//  Why Ghostscript: it remains the strongest open-source PDF
+//  re-distiller (its only real peer, MuPDF, is from the same authors
+//  and is aimed at in-process Python/C pipelines rather than a CLI).
+//  The presets alone, however, leave a lot on the table — they name a
+//  target resolution without switching downsampling on, and they pin
+//  the output to PDF 1.4, which forbids the compressed object and
+//  cross-reference streams that shrink the file structure itself.
+//  Every parameter below is therefore applied AFTER -dPDFSETTINGS,
+//  because Ghostscript processes options left to right and the preset
+//  assigns a whole bundle of Distiller parameters when it is read.
 //
 //  Progress is reported from stderr/stdout readability handlers, which
 //  Foundation delivers on a background queue. Those @Sendable closures
 //  must NOT mutate captured `var`s directly, so we keep the counters
-//  inside a lock-guarded reference class (GhostscriptProgressState) —
-//  same proven pattern that was in commit 136a048.
+//  inside a lock-guarded reference class (GhostscriptProgressState).
 //
 
 import Foundation
@@ -34,10 +42,10 @@ enum GhostscriptPreset: String, CaseIterable, Identifiable, Codable {
 
     var summary: String {
         switch self {
-        case .prepress: return "Print-ready / archival, 300 DPI"
-        case .printer:  return "High-quality printing, 300 DPI"
-        case .ebook:    return "Digital distribution, 150 DPI"
-        case .screen:   return "Web / email, 72 DPI"
+        case .prepress: return "Print-ready / archival, 300 DPI images"
+        case .printer:  return "High-quality printing, 300 DPI images"
+        case .ebook:    return "Digital distribution, 150 DPI images"
+        case .screen:   return "Web / email, 72 DPI images"
         }
     }
 
@@ -51,6 +59,15 @@ enum GhostscriptPreset: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// Colour / grayscale image resolution the preset targets. Stated
+    /// explicitly so downsampling can actually be enforced.
+    var imageResolution: Int {
+        switch self {
+        case .prepress, .printer: return 300
+        case .ebook:              return 150
+        case .screen:             return 72
+        }
+    }
 }
 
 // MARK: - Result + errors
@@ -62,6 +79,12 @@ struct CompressionResult {
     let compressedSize: Int64
     let preset: GhostscriptPreset
     let processingTime: TimeInterval
+    /// Image resolution the winning pass used, when target-size mode
+    /// searched for one.
+    let resolvedDPI: Int?
+    /// True when target-size mode could not reach the requested size
+    /// even at its most aggressive setting.
+    let missedTarget: Bool
 
     var savingsPercent: Double {
         guard originalSize > 0 else { return 0 }
@@ -93,10 +116,25 @@ enum CompressionError: LocalizedError {
 
 actor CompressionService {
 
+    /// Most aggressive image resolution the target-size search will try.
+    private static let minSearchDPI = 36
+    /// Passes the target-size search is allowed. Binary search over the
+    /// DPI range converges well inside this.
+    private static let maxSearchPasses = 5
+
+    /// Compresses `pdfURL` next to itself as `<name>_compressed.pdf`.
+    ///
+    /// With `targetFraction` nil this is a single Ghostscript pass at
+    /// the preset's own resolution. With a target set, it binary
+    /// searches image resolution for the *highest* quality that still
+    /// lands under the requested fraction of the original size —
+    /// which is what actually answers "make this as small as it needs
+    /// to be" rather than guessing at a preset.
     func compress(
         pdfURL: URL,
         preset: GhostscriptPreset,
         grayscale: Bool,
+        targetFraction: Double?,
         progressHandler: @escaping (Double) -> Void
     ) async throws -> CompressionResult {
 
@@ -109,35 +147,139 @@ actor CompressionService {
             throw CompressionError.ghostscriptNotFound
         }
 
-        let originalSize = (try? FileManager.default.attributesOfItem(atPath: pdfURL.path)[.size] as? Int64) ?? 0
-
+        let originalSize = Self.fileSize(pdfURL)
         let outputURL = pdfURL
             .deletingLastPathComponent()
             .appendingPathComponent("\(pdfURL.deletingPathExtension().lastPathComponent)_compressed.pdf")
 
-        let arguments = Self.buildArguments(
-            input: pdfURL.path,
-            output: outputURL.path,
-            preset: preset,
-            grayscale: grayscale
-        )
+        let finalSize: Int64
+        let resolvedDPI: Int?
+        var missedTarget = false
 
-        try await runGhostscript(
-            path: gsPath,
-            arguments: arguments,
-            progressHandler: progressHandler
-        )
+        if let targetFraction {
+            let outcome = try await searchForTarget(
+                gsPath: gsPath,
+                pdfURL: pdfURL,
+                outputURL: outputURL,
+                preset: preset,
+                grayscale: grayscale,
+                originalSize: originalSize,
+                targetFraction: targetFraction,
+                progressHandler: progressHandler
+            )
+            finalSize = outcome.size
+            resolvedDPI = outcome.dpi
+            missedTarget = outcome.missedTarget
+        } else {
+            try await runGhostscript(
+                path: gsPath,
+                arguments: Self.buildArguments(
+                    input: pdfURL.path,
+                    output: outputURL.path,
+                    preset: preset,
+                    grayscale: grayscale,
+                    imageDPI: nil
+                ),
+                progressHandler: progressHandler
+            )
+            finalSize = Self.fileSize(outputURL)
+            resolvedDPI = nil
+        }
 
-        let compressedSize = (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0
-        guard compressedSize > 0 else { throw CompressionError.cannotWrite }
+        guard finalSize > 0 else { throw CompressionError.cannotWrite }
 
         return CompressionResult(
             sourceURL: pdfURL,
             outputURL: outputURL,
             originalSize: originalSize,
-            compressedSize: compressedSize,
+            compressedSize: finalSize,
             preset: preset,
-            processingTime: Date().timeIntervalSince(startTime)
+            processingTime: Date().timeIntervalSince(startTime),
+            resolvedDPI: resolvedDPI,
+            missedTarget: missedTarget
+        )
+    }
+
+    // MARK: - Target-size search
+
+    private struct SearchOutcome {
+        let size: Int64
+        let dpi: Int
+        let missedTarget: Bool
+    }
+
+    private func searchForTarget(
+        gsPath: String,
+        pdfURL: URL,
+        outputURL: URL,
+        preset: GhostscriptPreset,
+        grayscale: Bool,
+        originalSize: Int64,
+        targetFraction: Double,
+        progressHandler: @escaping (Double) -> Void
+    ) async throws -> SearchOutcome {
+
+        let targetBytes = Int64(Double(originalSize) * targetFraction)
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pdfhandler-compress-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        var low = Self.minSearchDPI
+        var high = max(preset.imageResolution, Self.minSearchDPI)
+
+        // Best = highest DPI that met the target. Fallback = smallest
+        // file seen, used when even the floor overshoots.
+        var best: (url: URL, size: Int64, dpi: Int)?
+        var smallest: (url: URL, size: Int64, dpi: Int)?
+
+        for pass in 0..<Self.maxSearchPasses where low <= high {
+            let dpi = (low + high) / 2
+            let candidate = scratch.appendingPathComponent("pass-\(pass).pdf")
+
+            try await runGhostscript(
+                path: gsPath,
+                arguments: Self.buildArguments(
+                    input: pdfURL.path,
+                    output: candidate.path,
+                    preset: preset,
+                    grayscale: grayscale,
+                    imageDPI: dpi
+                ),
+                // Each pass owns a slice of the overall progress bar.
+                progressHandler: { inner in
+                    let span = 1.0 / Double(Self.maxSearchPasses)
+                    progressHandler(min(0.99, (Double(pass) + inner) * span))
+                }
+            )
+
+            let size = Self.fileSize(candidate)
+            guard size > 0 else { break }
+
+            if smallest == nil || size < smallest!.size {
+                smallest = (candidate, size, dpi)
+            }
+            if size <= targetBytes {
+                // Met the target — try to buy back quality.
+                best = (candidate, size, dpi)
+                low = dpi + 1
+            } else {
+                high = dpi - 1
+            }
+        }
+
+        guard let winner = best ?? smallest else {
+            throw CompressionError.cannotWrite
+        }
+
+        try? FileManager.default.removeItem(at: outputURL)
+        try FileManager.default.moveItem(at: winner.url, to: outputURL)
+        progressHandler(1.0)
+
+        return SearchOutcome(
+            size: winner.size,
+            dpi: winner.dpi,
+            missedTarget: best == nil
         )
     }
 
@@ -210,33 +352,105 @@ actor CompressionService {
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Arguments
 
-    private static func buildArguments(
+    /// ORDER IS LOAD-BEARING. Ghostscript applies options left to
+    /// right, and -dPDFSETTINGS assigns a whole bundle of Distiller
+    /// parameters when it is read — so every override has to come
+    /// after it or the preset silently wins.
+    static func buildArguments(
         input: String,
         output: String,
         preset: GhostscriptPreset,
-        grayscale: Bool
+        grayscale: Bool,
+        imageDPI: Int?
     ) -> [String] {
-        // No -dQUIET: the per-page "Processing pages" chatter is what
-        // drives the progress ticks in the readability handlers.
         var args: [String] = [
             "-sDEVICE=pdfwrite",
-            "-dCompatibilityLevel=1.4",
-            "-dPDFSETTINGS=\(preset.gsSettings)",
             "-dNOPAUSE",
             "-dBATCH",
-            "-sOutputFile=\(output)"
+            "-dSAFER",
+            "-dPDFSETTINGS=\(preset.gsSettings)",
         ]
+
+        // PDF 1.7 rather than the presets' 1.4: 1.5+ is what permits
+        // compressed object and cross-reference streams, which shrink
+        // the file's own structure. 1.7 (ISO 32000-1, 2008) is
+        // universally readable.
+        args.append("-dCompatibilityLevel=1.7")
+
+        // The presets name a target resolution but leave downsampling
+        // off, so images frequently pass through at full size. Turn it
+        // on and pick the better resampling filter.
+        let dpi = imageDPI ?? preset.imageResolution
+        args += [
+            "-dDownsampleColorImages=true",
+            "-dDownsampleGrayImages=true",
+            "-dDownsampleMonoImages=true",
+            "-dColorImageDownsampleType=/Bicubic",
+            "-dGrayImageDownsampleType=/Bicubic",
+            // Bilevel art turns to mush under interpolation.
+            "-dMonoImageDownsampleType=/Subsample",
+            "-dColorImageResolution=\(dpi)",
+            "-dGrayImageResolution=\(dpi)",
+            // Scanned text lives in the mono channel — keep it legible
+            // even when the colour images are crushed.
+            "-dMonoImageResolution=\(max(dpi * 2, 300))",
+            // Leave an image alone unless there is a real gain, rather
+            // than resampling something already close to target.
+            "-dColorImageDownsampleThreshold=1.2",
+            "-dGrayImageDownsampleThreshold=1.2",
+            "-dMonoImageDownsampleThreshold=1.2",
+        ]
+
+        args += [
+            // One stored copy of a logo repeated on all 40 pages.
+            "-dDetectDuplicateImages=true",
+            "-dCompressFonts=true",
+            "-dSubsetFonts=true",
+            // Keep the document renderable on machines without the
+            // fonts installed — a contract that reflows is worse than
+            // a contract that is 40KB bigger.
+            "-dEmbedAllFonts=true",
+            // Presets otherwise re-orient pages from their content,
+            // which silently rotates scanned documents.
+            "-dAutoRotatePages=/None",
+            // Linearize for fast first-page display.
+            "-dFastWebView=true",
+        ]
+
         if grayscale {
             args += [
                 "-sProcessColorModel=DeviceGray",
                 "-sColorConversionStrategy=Gray",
-                "-dOverrideICC"
+                "-dOverrideICC",
             ]
         }
-        args.append(input)
+
+        args += ["-sOutputFile=\(output)", input]
         return args
+    }
+
+    // MARK: - Helpers
+
+    static func fileSize(_ url: URL) -> Int64 {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? NSNumber else { return 0 }
+        return size.int64Value
+    }
+
+    /// True when the PDF carries a cryptographic signature.
+    ///
+    /// Any re-distillation rewrites the file's bytes and therefore
+    /// invalidates the /ByteRange digest a signature is computed over —
+    /// Ghostscript cannot preserve one, and neither can any other
+    /// re-writer. For a signing app that is worth warning about before
+    /// destroying, not after.
+    static func carriesDigitalSignature(url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return false }
+        // /ByteRange only appears in a signature dictionary that has
+        // actually been signed; an empty signature *field* has none.
+        return data.range(of: Data("/ByteRange".utf8)) != nil
     }
 
     static func findGhostscript() -> String? {

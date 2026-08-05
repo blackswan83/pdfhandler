@@ -52,6 +52,12 @@ Library lives at `~/Library/Application Support/PDFHandler/signatures.json`.
 
 Pick a PDF, choose a preset, optionally toggle grayscale, **Compress**. Output: `<name>_compressed.pdf` next to the source.
 
+Turn on **Compress to a target size** to name a percentage of the original instead: the app runs several Ghostscript passes, binary-searching image resolution for the highest quality that still fits under the target, and reports the DPI it settled on. If even the most aggressive setting overshoots — normal for text-only PDFs, which have no images to shrink — it says so rather than pretending.
+
+Beyond the stock presets (which only *name* a resolution), the app enables image downsampling, deduplicates repeated images, subsets fonts, and emits PDF 1.7 so the file structure itself is compressed. Bilevel scan content keeps a 300 DPI floor so scanned text stays legible even at aggressive settings.
+
+**Digitally signed PDFs:** compression rewrites the file and therefore breaks its cryptographic signature — that is inherent to re-compression, not specific to this app. The app detects signed input and warns before you run it. The original is never modified.
+
 Requires Ghostscript. The app detects it automatically at `/opt/homebrew/bin/gs`, `/usr/local/bin/gs`, `/usr/bin/gs`, `/opt/local/bin/gs`, `/sw/bin/gs`, or via `which gs`. If it's missing the compress pane shows a card with a one-click copy of:
 
 ```bash

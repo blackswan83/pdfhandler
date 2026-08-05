@@ -23,6 +23,9 @@ struct CompressView: View {
                     missingGhostscriptCard
                 }
                 pickFileSection
+                if appState.compressSourceIsSigned {
+                    signedWarningCard
+                }
                 optionsSection
                 runSection
                 if let result = appState.compressResult { resultCard(result) }
@@ -121,7 +124,44 @@ struct CompressView: View {
                 .foregroundStyle(.secondary)
 
             Toggle("Convert to grayscale", isOn: $appState.compressGrayscale)
+
+            Divider()
+
+            Toggle("Compress to a target size", isOn: $appState.compressUseTargetSize)
+            if appState.compressUseTargetSize {
+                Text("Target: \(Int(appState.compressTargetFraction * 100))% of the original")
+                    .font(.subheadline)
+                Slider(value: $appState.compressTargetFraction, in: 0.1...0.9, step: 0.05) {
+                    Text("Target size")
+                } minimumValueLabel: {
+                    Text("10%").font(.caption2)
+                } maximumValueLabel: {
+                    Text("90%").font(.caption2)
+                }
+                Text("Runs several passes, searching for the highest image quality that still fits under the target. The preset above sets the starting quality.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+    }
+
+    // MARK: - Digitally signed source
+
+    private var signedWarningCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("This PDF is digitally signed", systemImage: "checkmark.seal.trianglebadge.exclamationmark")
+                .font(.headline)
+                .foregroundStyle(Color.orange)
+            Text("Compressing rewrites the file, which invalidates its cryptographic signature — no compressor can avoid this. The original stays untouched, but the compressed copy will show as unsigned.")
+                .font(.callout)
+        }
+        .padding(14)
+        .background(Color.orange.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     // MARK: - Run
@@ -132,7 +172,8 @@ struct CompressView: View {
                 appState.runCompression()
             } label: {
                 if appState.compressIsRunning {
-                    Label("Compressing…", systemImage: "gearshape").labelStyle(.titleAndIcon)
+                    Label(appState.compressUseTargetSize ? "Searching…" : "Compressing…",
+                          systemImage: "gearshape").labelStyle(.titleAndIcon)
                 } else {
                     Label("Compress", systemImage: "arrow.down.circle.fill").labelStyle(.titleAndIcon)
                 }
@@ -152,17 +193,25 @@ struct CompressView: View {
 
     private func resultCard(_ result: CompressionResult) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label("Compressed", systemImage: "checkmark.seal.fill")
+            Label(result.missedTarget ? "Compressed as far as it goes" : "Compressed",
+                  systemImage: result.missedTarget ? "exclamationmark.circle.fill" : "checkmark.seal.fill")
                 .font(.headline)
-                .foregroundStyle(Color.green)
+                .foregroundStyle(result.missedTarget ? Color.orange : Color.green)
             Text(result.outputURL.lastPathComponent)
                 .font(.subheadline)
             Text("\(byteString(result.originalSize)) → \(byteString(result.compressedSize))  (\(Int(result.savingsPercent * 100))% smaller)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let dpi = result.resolvedDPI {
+                Text(result.missedTarget
+                     ? "Could not reach the target even at \(dpi) DPI images — this PDF is mostly text or already optimized."
+                     : "Best quality that fit: \(dpi) DPI images.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
-        .background(Color.green.opacity(0.08))
+        .background((result.missedTarget ? Color.orange : Color.green).opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 

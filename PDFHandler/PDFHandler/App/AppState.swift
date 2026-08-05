@@ -198,9 +198,25 @@ final class AppState: ObservableObject {
     @AppStorage("lastSize.checkbox.w")  private var lastSizeCheckboxW:  Double = 0.03
 
     // MARK: Compress mode
-    @Published var compressSourceURL: URL?
+    @Published var compressSourceURL: URL? {
+        didSet {
+            compressSourceIsSigned = compressSourceURL.map {
+                CompressionService.carriesDigitalSignature(url: $0)
+            } ?? false
+            compressResult = nil
+            compressError = nil
+        }
+    }
     @Published var compressPreset: GhostscriptPreset = .ebook
     @Published var compressGrayscale: Bool = false
+    /// Aim for a specific fraction of the original size, searching for
+    /// the highest image quality that fits, instead of trusting a
+    /// preset to land somewhere useful.
+    @Published var compressUseTargetSize: Bool = false
+    @Published var compressTargetFraction: Double = 0.5
+    /// The chosen PDF carries a cryptographic signature, which no
+    /// re-compressor can preserve.
+    @Published private(set) var compressSourceIsSigned: Bool = false
     @Published var compressIsRunning: Bool = false
     @Published var compressProgress: Double = 0
     @Published var compressResult: CompressionResult?
@@ -546,6 +562,7 @@ final class AppState: ObservableObject {
 
         let preset = compressPreset
         let grayscale = compressGrayscale
+        let target = compressUseTargetSize ? compressTargetFraction : nil
 
         Task { [weak self] in
             guard let self else { return }
@@ -554,6 +571,7 @@ final class AppState: ObservableObject {
                     pdfURL: url,
                     preset: preset,
                     grayscale: grayscale,
+                    targetFraction: target,
                     progressHandler: { progress in
                         Task { @MainActor in
                             self.compressProgress = progress

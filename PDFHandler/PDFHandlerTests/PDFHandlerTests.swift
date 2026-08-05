@@ -98,6 +98,73 @@ final class PDFHandlerTests: XCTestCase {
         }
     }
 
+    // MARK: - Ghostscript argument construction
+
+    /// Ghostscript applies options left to right and -dPDFSETTINGS
+    /// assigns a whole bundle of Distiller parameters when read, so an
+    /// override placed before it is silently discarded. This ordering
+    /// is the whole reason the presets used to leave images untouched.
+    func testEveryOverrideFollowsThePreset() {
+        let args = CompressionService.buildArguments(
+            input: "/tmp/in.pdf",
+            output: "/tmp/out.pdf",
+            preset: .ebook,
+            grayscale: true,
+            imageDPI: nil
+        )
+        guard let presetIndex = args.firstIndex(where: { $0.hasPrefix("-dPDFSETTINGS=") }) else {
+            return XCTFail("no preset argument emitted")
+        }
+        for override in [
+            "-dCompatibilityLevel=1.7",
+            "-dDownsampleColorImages=true",
+            "-dColorImageResolution=150",
+            "-dDetectDuplicateImages=true",
+            "-dAutoRotatePages=/None",
+            "-sColorConversionStrategy=Gray",
+        ] {
+            guard let index = args.firstIndex(of: override) else {
+                return XCTFail("missing argument \(override)")
+            }
+            XCTAssertGreaterThan(index, presetIndex, "\(override) must come after -dPDFSETTINGS")
+        }
+    }
+
+    func testImageDPIOverridesThePresetResolution() {
+        let args = CompressionService.buildArguments(
+            input: "/tmp/in.pdf",
+            output: "/tmp/out.pdf",
+            preset: .printer,          // 300 DPI preset
+            grayscale: false,
+            imageDPI: 90               // target-size search picked 90
+        )
+        XCTAssertTrue(args.contains("-dColorImageResolution=90"))
+        XCTAssertTrue(args.contains("-dGrayImageResolution=90"))
+        // Bilevel scanned text keeps its own floor so it stays legible.
+        XCTAssertTrue(args.contains("-dMonoImageResolution=300"))
+    }
+
+    func testInputIsTheFinalArgumentAndOutputIsFlagged() {
+        let args = CompressionService.buildArguments(
+            input: "/tmp/in.pdf",
+            output: "/tmp/out.pdf",
+            preset: .screen,
+            grayscale: false,
+            imageDPI: nil
+        )
+        XCTAssertEqual(args.last, "/tmp/in.pdf")
+        XCTAssertTrue(args.contains("-sOutputFile=/tmp/out.pdf"))
+        XCTAssertTrue(args.contains("-dSAFER"))
+    }
+
+    func testGrayscaleFlagsOnlyAppearWhenRequested() {
+        let colour = CompressionService.buildArguments(
+            input: "/tmp/in.pdf", output: "/tmp/out.pdf",
+            preset: .ebook, grayscale: false, imageDPI: nil
+        )
+        XCTAssertFalse(colour.contains("-sColorConversionStrategy=Gray"))
+    }
+
     func testContentTraits() {
         XCTAssertTrue(PlacementContent.signature(signatureID: UUID()).keepsAspectRatio)
         XCTAssertTrue(PlacementContent.checkbox(isChecked: false).keepsAspectRatio)
