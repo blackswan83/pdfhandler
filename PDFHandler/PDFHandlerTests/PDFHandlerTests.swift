@@ -75,27 +75,33 @@ final class PDFHandlerTests: XCTestCase {
 
     func testZoomStepsWalkTheStopsFromAnArbitraryFitScale() {
         // Typical fit scale for a Letter page in a laptop-sized pane.
-        XCTAssertEqual(AppState.zoomStop(above: 0.78), 1.0)
-        XCTAssertEqual(AppState.zoomStop(below: 0.78), 0.75)
+        XCTAssertEqual(ZoomScale.stop(above: 0.78), 1.0)
+        XCTAssertEqual(ZoomScale.stop(below: 0.78), 0.75)
 
-        XCTAssertEqual(AppState.zoomStop(above: 1.0), 1.25)
-        XCTAssertEqual(AppState.zoomStop(below: 1.0), 0.75)
+        XCTAssertEqual(ZoomScale.stop(above: 1.0), 1.25)
+        XCTAssertEqual(ZoomScale.stop(below: 1.0), 0.75)
     }
 
     func testZoomStepsClampAtTheEnds() {
-        XCTAssertEqual(AppState.zoomStop(above: AppState.maxZoom), AppState.maxZoom)
-        XCTAssertEqual(AppState.zoomStop(below: AppState.minZoom), AppState.minZoom)
+        XCTAssertEqual(ZoomScale.stop(above: ZoomScale.max), ZoomScale.max)
+        XCTAssertEqual(ZoomScale.stop(below: ZoomScale.min), ZoomScale.min)
     }
 
     func testZoomStepsDoNotStickOnAnExactStop() {
         // Landing exactly on a stop must still advance, not return the
         // same value (the tolerance guards float noise, not progress).
-        for stop in AppState.zoomStops where stop < AppState.maxZoom {
-            XCTAssertGreaterThan(AppState.zoomStop(above: stop), stop)
+        for stop in ZoomScale.stops where stop < ZoomScale.max {
+            XCTAssertGreaterThan(ZoomScale.stop(above: stop), stop)
         }
-        for stop in AppState.zoomStops where stop > AppState.minZoom {
-            XCTAssertLessThan(AppState.zoomStop(below: stop), stop)
+        for stop in ZoomScale.stops where stop > ZoomScale.min {
+            XCTAssertLessThan(ZoomScale.stop(below: stop), stop)
         }
+    }
+
+    func testZoomClampBoundsBothEnds() {
+        XCTAssertEqual(ZoomScale.clamp(0.01), ZoomScale.min)
+        XCTAssertEqual(ZoomScale.clamp(99), ZoomScale.max)
+        XCTAssertEqual(ZoomScale.clamp(1.5), 1.5)
     }
 
     // MARK: - Ghostscript argument construction

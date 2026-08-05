@@ -154,7 +154,7 @@ struct SignWorkspaceView: View {
                     Button("Zoom to Fit") { appState.zoomToFit() }
                     Button("Actual Size") { appState.zoomToActualSize() }
                     Divider()
-                    ForEach(AppState.zoomStops, id: \.self) { stop in
+                    ForEach(ZoomScale.stops, id: \.self) { stop in
                         Button("\(Int(stop * 100))%") { appState.setZoom(stop) }
                     }
                 }

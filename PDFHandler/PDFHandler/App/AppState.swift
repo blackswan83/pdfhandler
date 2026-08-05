@@ -136,10 +136,6 @@ final class AppState: ObservableObject {
     /// re-trigger layout.
     private(set) var fittedScale: Double = 1.0
 
-    static let minZoom: Double = 0.25
-    static let maxZoom: Double = 6.0
-    static let zoomStops: [Double] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 6.0]
-
     /// The scale actually on screen right now.
     var effectiveZoom: Double { isZoomFitted ? fittedScale : zoom }
 
@@ -147,8 +143,8 @@ final class AppState: ObservableObject {
         isZoomFitted ? "Fit" : "\(Int((zoom * 100).rounded()))%"
     }
 
-    var canZoomIn:  Bool { document != nil && effectiveZoom < Self.maxZoom - 0.001 }
-    var canZoomOut: Bool { document != nil && effectiveZoom > Self.minZoom + 0.001 }
+    var canZoomIn:  Bool { document != nil && effectiveZoom < ZoomScale.max - 0.001 }
+    var canZoomOut: Bool { document != nil && effectiveZoom > ZoomScale.min + 0.001 }
 
     func recordFittedScale(_ scale: Double) {
         guard scale > 0 else { return }
@@ -158,29 +154,19 @@ final class AppState: ObservableObject {
     /// Set an absolute zoom level. `recenter: false` is for continuous
     /// gestures, which must not fight the scroll position mid-pinch.
     func setZoom(_ value: Double, recenter: Bool = true) {
-        zoom = min(max(value, Self.minZoom), Self.maxZoom)
+        zoom = ZoomScale.clamp(value)
         isZoomFitted = false
         if recenter { zoomToken &+= 1 }
     }
 
-    func zoomIn()  { setZoom(Self.zoomStop(above: effectiveZoom)) }
-    func zoomOut() { setZoom(Self.zoomStop(below: effectiveZoom)) }
+    func zoomIn()  { setZoom(ZoomScale.stop(above: effectiveZoom)) }
+    func zoomOut() { setZoom(ZoomScale.stop(below: effectiveZoom)) }
     func zoomToActualSize() { setZoom(1.0) }
 
     func zoomToFit() {
         isZoomFitted = true
         zoom = fittedScale
         zoomToken &+= 1
-    }
-
-    /// Next stop above `value`, falling back to the ceiling. Pure so the
-    /// stepping behaviour is directly testable.
-    static func zoomStop(above value: Double) -> Double {
-        zoomStops.first { $0 > value * 1.005 } ?? maxZoom
-    }
-
-    static func zoomStop(below value: Double) -> Double {
-        zoomStops.last { $0 < value * 0.995 } ?? minZoom
     }
 
     // MARK: Remembered placement sizes (persisted across launches)
