@@ -120,24 +120,7 @@ struct CompressView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text("Target ratio: \(Int(appState.compressTargetRatio * 100))%").font(.subheadline)
-            Slider(value: $appState.compressTargetRatio, in: 0.1...1.0, step: 0.05) {
-                Text("Target ratio")
-            } minimumValueLabel: {
-                Text("10%").font(.caption2)
-            } maximumValueLabel: {
-                Text("100%").font(.caption2)
-            }
-            .onChange(of: appState.compressTargetRatio) { newValue in
-                // Nudge the preset toward the range that matches the slider
-                let suggested = GhostscriptPreset.forRatio(newValue)
-                if suggested != appState.compressPreset {
-                    appState.compressPreset = suggested
-                }
-            }
-
             Toggle("Convert to grayscale", isOn: $appState.compressGrayscale)
-            Toggle("Preserve metadata",   isOn: $appState.compressPreserveMetadata)
         }
     }
 

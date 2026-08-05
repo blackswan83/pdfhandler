@@ -49,7 +49,7 @@ Library lives at `~/Library/Application Support/PDFHandler/signatures.json`.
 
 ### Compress
 
-Pick a PDF, choose a preset (slider nudges the preset automatically), optionally toggle grayscale / preserve metadata, **Compress**. Output: `<name>_compressed.pdf` next to the source.
+Pick a PDF, choose a preset, optionally toggle grayscale, **Compress**. Output: `<name>_compressed.pdf` next to the source.
 
 Requires Ghostscript. The app detects it automatically at `/opt/homebrew/bin/gs`, `/usr/local/bin/gs`, `/usr/bin/gs`, `/opt/local/bin/gs`, `/sw/bin/gs`, or via `which gs`. If it's missing the compress pane shows a card with a one-click copy of:
 
@@ -63,7 +63,7 @@ Add PDFs (button or drag), drag rows to reorder, set the output name, **Merge**.
 
 ### Convert to Markdown
 
-Pick a PDF, toggle options (YAML frontmatter, extract images, OCR, OCR languages, table fallback), **Convert**. Output: `<name>.md` next to the source plus a companion `<name>_images/` directory of figures.
+Pick a PDF, toggle options (YAML frontmatter, full-page images, OCR, OCR languages), **Convert**. Output: `<name>.md` next to the source (never overwriting an existing file), plus an optional companion `<name>_images/` directory of page images.
 
 OCR is Vision-based; it kicks in only for pages whose text layer is empty / very short. No cloud calls.
 

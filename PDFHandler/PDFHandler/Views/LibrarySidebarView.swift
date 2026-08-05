@@ -15,11 +15,15 @@ import AppKit
 /// outer `List`.
 struct LibrarySidebarSections: View {
     @EnvironmentObject var appState: AppState
+    @State private var pendingDelete: SavedSignature?
 
     var body: some View {
         Section("Signatures") {
             rows(for: .signature, activeID: appState.activeSignatureID) { id in
+                // Picking an asset also arms the matching tool so the
+                // next page click places what the user just chose.
                 appState.activeSignatureID = id
+                appState.activeTool = .signature
             }
             addRow(label: "Add signature…") {
                 appState.newSignatureRole = .signature
@@ -29,11 +33,27 @@ struct LibrarySidebarSections: View {
         Section("Initials") {
             rows(for: .initials, activeID: appState.activeInitialsID) { id in
                 appState.activeInitialsID = id
+                appState.activeTool = .initials
             }
             addRow(label: "Add initials…") {
                 appState.newSignatureRole = .initials
                 appState.isPresentingNewSignature = true
             }
+        }
+        .confirmationDialog(
+            "Delete \"\(pendingDelete?.name ?? "")\"?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            presenting: pendingDelete
+        ) { entry in
+            Button("Delete", role: .destructive) {
+                appState.deleteSignature(id: entry.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { entry in
+            Text("Any fields using \"\(entry.name)\" on the open document will be removed. This cannot be undone.")
         }
     }
 
@@ -56,7 +76,7 @@ struct LibrarySidebarSections: View {
                     entry: entry,
                     isActive: entry.id == activeID,
                     onActivate: { onActivate(entry.id) },
-                    onDelete: { appState.deleteSignature(id: entry.id) }
+                    onDelete: { pendingDelete = entry }
                 )
             }
         }

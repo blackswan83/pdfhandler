@@ -88,39 +88,28 @@ struct PDFPreviewView: View {
     // MARK: - Rendering
 
     private func pageImage(page: PDFPage, pageIndex: Int, fit: CGSize) -> NSImage {
-        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let display = page.displaySize
+        guard fit.width >= 1, fit.height >= 1, display.width > 0, display.height > 0 else {
+            return NSImage(size: NSSize(width: 1, height: 1))
+        }
+        // Render at the window's actual backing scale (mixed-DPI safe),
+        // bucketing the pixel width so live window resizing reuses the
+        // cached bitmap instead of re-rasterizing on every tick. Height
+        // follows the page aspect exactly, so nothing distorts.
+        let scale = NSApp.keyWindow?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor ?? 2
+        let pixelW = (ceil(fit.width * scale / 128) * 128)
+        let pixelH = (pixelW * display.height / display.width).rounded()
+        let pixel = CGSize(width: pixelW, height: pixelH)
         return PageImageCache.shared.image(
             documentID: appState.documentID,
             pageIndex: pageIndex,
-            size: fit,
-            scale: scale
+            size: pixel,
+            scale: 1
         ) {
-            renderPage(page, fit: fit)
+            page.renderedDisplayImage(pixelSize: pixel, pointSize: pixel)
+                ?? NSImage(size: NSSize(width: 1, height: 1))
         }
-    }
-
-    private func renderPage(_ page: PDFPage, fit: CGSize) -> NSImage {
-        guard fit.width >= 1, fit.height >= 1 else {
-            return NSImage(size: NSSize(width: 1, height: 1))
-        }
-        // NSImage.lockFocus builds the backing store at the screen's
-        // scale factor, so drawing at `fit` points is Retina-sharp.
-        let image = NSImage(size: fit)
-        image.lockFocus()
-        if let ctx = NSGraphicsContext.current?.cgContext {
-            ctx.setFillColor(NSColor.white.cgColor)
-            ctx.fill(CGRect(origin: .zero, size: fit))
-            let display = page.displaySize
-            if display.width > 0, display.height > 0 {
-                ctx.saveGState()
-                ctx.interpolationQuality = .high
-                ctx.scaleBy(x: fit.width / display.width, y: fit.height / display.height)
-                page.drawDisplayOriented(in: ctx)
-                ctx.restoreGState()
-            }
-        }
-        image.unlockFocus()
-        return image
     }
 
     private func fittedSize(pageSize: CGSize, container: CGSize) -> CGSize {

@@ -72,7 +72,7 @@ struct ConvertView: View {
     private var optionsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle("Include YAML frontmatter", isOn: $appState.convertIncludeYAMLFrontmatter)
-            Toggle("Extract images next to Markdown", isOn: $appState.convertExtractImages)
+            Toggle("Save each page as an image next to the Markdown", isOn: $appState.convertExtractImages)
 
             Picker("Image format", selection: $appState.convertImageFormat) {
                 ForEach(ConvertImageFormat.allCases) { format in

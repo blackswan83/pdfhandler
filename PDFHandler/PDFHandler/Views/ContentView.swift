@@ -77,7 +77,7 @@ struct ContentView: View {
             pickPDF { url in appState.compressSourceURL = url }
         case .merge:
             pickPDFs(multi: true) { urls in
-                appState.mergeSourceURLs.append(contentsOf: urls)
+                appState.mergeItems.append(contentsOf: urls.map { MergeItem(url: $0) })
             }
         case .convert:
             pickPDF { url in appState.convertSourceURL = url }

@@ -132,9 +132,7 @@ final class AppState: ObservableObject {
     // MARK: Compress mode
     @Published var compressSourceURL: URL?
     @Published var compressPreset: GhostscriptPreset = .ebook
-    @Published var compressTargetRatio: Double = 0.5
     @Published var compressGrayscale: Bool = false
-    @Published var compressPreserveMetadata: Bool = true
     @Published var compressIsRunning: Bool = false
     @Published var compressProgress: Double = 0
     @Published var compressResult: CompressionResult?
@@ -142,7 +140,7 @@ final class AppState: ObservableObject {
     @Published var compressGhostscriptMissing: Bool = false
 
     // MARK: Merge mode
-    @Published var mergeSourceURLs: [URL] = []
+    @Published var mergeItems: [MergeItem] = []
     @Published var mergeOutputName: String = "merged"
     @Published var mergeIsRunning: Bool = false
     @Published var mergeProgress: Double = 0
@@ -152,7 +150,7 @@ final class AppState: ObservableObject {
     // MARK: Convert mode
     @Published var convertSourceURL: URL?
     @Published var convertIncludeYAMLFrontmatter: Bool = true
-    @Published var convertExtractImages: Bool = true
+    @Published var convertExtractImages: Bool = false
     @Published var convertImageFormat: ConvertImageFormat = .png
     @Published var convertPerformOCR: Bool = true
     @Published var convertOCRLanguages: String = "en-US"
@@ -476,9 +474,7 @@ final class AppState: ObservableObject {
         compressGhostscriptMissing = false
 
         let preset = compressPreset
-        let ratio = compressTargetRatio
         let grayscale = compressGrayscale
-        let preserveMetadata = compressPreserveMetadata
 
         Task { [weak self] in
             guard let self else { return }
@@ -486,9 +482,7 @@ final class AppState: ObservableObject {
                 let result = try await compressor.compress(
                     pdfURL: url,
                     preset: preset,
-                    targetRatio: ratio,
                     grayscale: grayscale,
-                    preserveMetadata: preserveMetadata,
                     progressHandler: { progress in
                         Task { @MainActor in
                             self.compressProgress = progress
@@ -519,11 +513,11 @@ final class AppState: ObservableObject {
     // MARK: - Merge mode
 
     func runMerge() {
-        guard mergeSourceURLs.count >= 2 else {
+        guard mergeItems.count >= 2 else {
             mergeError = "Add at least two PDFs."
             return
         }
-        let urls = mergeSourceURLs
+        let urls = mergeItems.map(\.url)
         let outputName = mergeOutputName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "merged" : mergeOutputName
         mergeError = nil

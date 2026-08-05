@@ -154,6 +154,7 @@ struct PlacementView: View {
             .padding(.horizontal, inset)
             .focused($textFocused)
             .onSubmit { appState.editingPlacementID = nil }
+            .onExitCommand { appState.editingPlacementID = nil }
             .onAppear {
                 draft = text
                 DispatchQueue.main.async { textFocused = true }
@@ -206,28 +207,45 @@ struct PlacementView: View {
     }
 
     private var resizeHandle: some View {
-        // Small design-tool corner knob centered on the corner, with a
-        // generous invisible hit area around it.
+        // Small design-tool corner knob centered on the corner. The hit
+        // padding is kept modest so that at minimum field sizes the
+        // knob doesn't eat drags meant to move the field.
         Circle()
             .fill(Color.white)
             .overlay(Circle().stroke(Color.accentColor, lineWidth: 1.5))
             .frame(width: 11, height: 11)
             .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
-            .padding(9)
+            .padding(6)
             .contentShape(Rectangle())
             .onHover { hovering in
-                if hovering, dragStart == nil { NSCursor.crosshair.set() }
+                guard dragStart == nil else { return }
+                if hovering {
+                    NSCursor.crosshair.set()
+                } else if isHovering, !isEditing {
+                    // Back over the field body: the body's own onHover
+                    // won't re-fire (the pointer never left it), so
+                    // restore the move cursor here.
+                    NSCursor.openHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
             }
             .highPriorityGesture(resizeDrag)
-            .offset(x: 14, y: 14)
+            .offset(x: 12, y: 12)
     }
 
     // MARK: - Gestures
 
     private var selectTap: some Gesture {
-        TapGesture().onEnded {
+        SpatialTapGesture().onEnded { event in
             appState.selectedPlacementID = placement.id
             if case .checkbox(let isChecked) = placement.content {
+                // A press on the resize knob's corner also arrives here
+                // (simultaneous gestures bypass the knob's exclusivity);
+                // don't treat it as a toggle.
+                let rect = pixelRect
+                let knobZone = CGRect(x: rect.width - 16, y: rect.height - 16, width: 32, height: 32)
+                if showsControls, knobZone.contains(event.location) { return }
                 appState.updateContent(id: placement.id, content: .checkbox(isChecked: !isChecked))
             }
         }
@@ -277,19 +295,25 @@ struct PlacementView: View {
                 let keepAspect = placement.content.keepsAspectRatio
                 let minSide: CGFloat = 18
                 let proposedW = max(minSide, start.width + value.translation.width)
-                var newW = min(proposedW, pageSize.width - start.origin.x)
+                var newW = min(proposedW, pageSize.width)
 
                 let newH: CGFloat
                 if keepAspect, start.height > 0 {
                     let aspect = start.width / start.height
-                    let heightCap = pageSize.height - start.origin.y
-                    newH = min(newW / aspect, heightCap)
+                    newH = min(newW / aspect, pageSize.height)
                     newW = newH * aspect
                 } else {
                     let proposedH = max(minSide, start.height + value.translation.height)
-                    newH = min(proposedH, pageSize.height - start.origin.y)
+                    newH = min(proposedH, pageSize.height)
                 }
-                emitLive(origin: start.origin, size: CGSize(width: newW, height: newH))
+                // Fields pinned against the right/bottom page edge can
+                // still grow: the origin shifts back to make room
+                // instead of the size silently capping at the edge.
+                let origin = CGPoint(
+                    x: min(start.origin.x, pageSize.width - newW),
+                    y: min(start.origin.y, pageSize.height - newH)
+                )
+                emitLive(origin: origin, size: CGSize(width: newW, height: newH))
             }
             .onEnded { _ in finishDrag(label: "Resize") }
     }

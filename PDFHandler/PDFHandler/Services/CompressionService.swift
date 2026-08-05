@@ -51,23 +51,6 @@ enum GhostscriptPreset: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// The sensible target-ratio range each preset implies.
-    var suggestedRatioRange: ClosedRange<Double> {
-        switch self {
-        case .prepress: return 0.9...1.0
-        case .printer:  return 0.6...0.9
-        case .ebook:    return 0.3...0.6
-        case .screen:   return 0.1...0.3
-        }
-    }
-
-    /// Pick the preset whose range covers (or is closest to) `ratio`.
-    static func forRatio(_ ratio: Double) -> GhostscriptPreset {
-        for preset in [GhostscriptPreset.prepress, .printer, .ebook, .screen] {
-            if preset.suggestedRatioRange.contains(ratio) { return preset }
-        }
-        return .ebook
-    }
 }
 
 // MARK: - Result + errors
@@ -113,9 +96,7 @@ actor CompressionService {
     func compress(
         pdfURL: URL,
         preset: GhostscriptPreset,
-        targetRatio: Double,
         grayscale: Bool,
-        preserveMetadata: Bool,
         progressHandler: @escaping (Double) -> Void
     ) async throws -> CompressionResult {
 
@@ -138,8 +119,7 @@ actor CompressionService {
             input: pdfURL.path,
             output: outputURL.path,
             preset: preset,
-            grayscale: grayscale,
-            preserveMetadata: preserveMetadata
+            grayscale: grayscale
         )
 
         try await runGhostscript(
@@ -150,8 +130,6 @@ actor CompressionService {
 
         let compressedSize = (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0
         guard compressedSize > 0 else { throw CompressionError.cannotWrite }
-
-        _ = targetRatio // surfaced in UI; the preset itself drives gs settings
 
         return CompressionResult(
             sourceURL: pdfURL,
@@ -188,7 +166,10 @@ actor CompressionService {
             stderrPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 guard !data.isEmpty else { return }
-                let updated = progress.bumpStderr()
+                // Keep the bytes: they're the only error detail gs
+                // produces, and draining them here would otherwise
+                // leave the failure banner empty.
+                let updated = progress.bumpStderr(appending: data)
                 DispatchQueue.main.async { progressHandler(updated) }
             }
 
@@ -203,13 +184,19 @@ actor CompressionService {
             process.terminationHandler = { proc in
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                let remaining = (try? stderrPipe.fileHandleForReading.readToEnd()) ?? nil
                 DispatchQueue.main.async {
                     if proc.terminationStatus == 0 {
                         progressHandler(1.0)
                         continuation.resume()
                     } else {
-                        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                        let message = String(data: errData, encoding: .utf8) ?? "exit code \(proc.terminationStatus)"
+                        var errData = progress.collectedStderr()
+                        if let remaining { errData.append(remaining) }
+                        let text = String(data: errData, encoding: .utf8)?
+                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let message = text.isEmpty
+                            ? "exit code \(proc.terminationStatus)"
+                            : String(text.suffix(600))
                         continuation.resume(throwing: CompressionError.ghostscriptFailed(message))
                     }
                 }
@@ -229,15 +216,15 @@ actor CompressionService {
         input: String,
         output: String,
         preset: GhostscriptPreset,
-        grayscale: Bool,
-        preserveMetadata: Bool
+        grayscale: Bool
     ) -> [String] {
+        // No -dQUIET: the per-page "Processing pages" chatter is what
+        // drives the progress ticks in the readability handlers.
         var args: [String] = [
             "-sDEVICE=pdfwrite",
             "-dCompatibilityLevel=1.4",
             "-dPDFSETTINGS=\(preset.gsSettings)",
             "-dNOPAUSE",
-            "-dQUIET",
             "-dBATCH",
             "-sOutputFile=\(output)"
         ]
@@ -247,9 +234,6 @@ actor CompressionService {
                 "-sColorConversionStrategy=Gray",
                 "-dOverrideICC"
             ]
-        }
-        if !preserveMetadata {
-            args += ["-dPrinted=false"]
         }
         args.append(input)
         return args
@@ -302,12 +286,20 @@ actor CompressionService {
 private final class GhostscriptProgressState: @unchecked Sendable {
     private let lock = NSLock()
     private var lastProgress: Double = 0.0
+    private var stderrData = Data()
 
-    /// Any stderr activity bumps progress up to 0.95.
-    func bumpStderr() -> Double {
+    /// Any stderr activity bumps progress up to 0.95; the bytes are
+    /// retained so a failure can show gs's actual error text.
+    func bumpStderr(appending chunk: Data) -> Double {
         lock.lock(); defer { lock.unlock() }
+        if stderrData.count < 64 * 1024 { stderrData.append(chunk) }
         lastProgress = min(lastProgress + 0.05, 0.95)
         return lastProgress
+    }
+
+    func collectedStderr() -> Data {
+        lock.lock(); defer { lock.unlock() }
+        return stderrData
     }
 
     /// Any stdout activity bumps progress up to 0.9; nil if already past.
