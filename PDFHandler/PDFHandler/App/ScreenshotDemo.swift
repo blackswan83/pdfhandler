@@ -29,11 +29,20 @@ enum ScreenshotDemo {
     /// proved unreliable — the click silently did nothing and CI
     /// captured the same pane twice.
     static var initialMode: AppMode? {
+        value(for: "--screenshot-mode").flatMap(AppMode.init(rawValue:))
+    }
+
+    /// `--screenshot-select freetext` selects a text field instead of
+    /// the signature, so the text inspector — which only appears for a
+    /// text selection — is actually in frame.
+    static var selection: String? { value(for: "--screenshot-select") }
+
+    private static func value(for flag: String) -> String? {
         let args = CommandLine.arguments
-        guard let flag = args.firstIndex(of: "--screenshot-mode"),
-              args.index(after: flag) < args.endIndex
+        guard let idx = args.firstIndex(of: flag),
+              args.index(after: idx) < args.endIndex
         else { return nil }
-        return AppMode(rawValue: args[args.index(after: flag)])
+        return args[args.index(after: idx)]
     }
 
     /// Draws a plausible two-page consulting agreement into a temp file
@@ -197,8 +206,19 @@ extension AppState {
             ),
         ]
         placements = placed
-        // Select the signature so the screenshot shows the selection
-        // chrome — border, resize knob and delete button.
-        selectedPlacementID = placed.first?.id
+
+        if ScreenshotDemo.selection == "freetext" {
+            // Text field selected: brings up the typography inspector.
+            selectedPlacementID = placed.first { $0.content.textPayload != nil }?.id
+            activeTool = .freeText
+        } else {
+            // Signature selected: shows the selection chrome — border,
+            // resize knob and delete button.
+            selectedPlacementID = placed.first?.id
+        }
+
+        // Give Compress a real source so its size estimate has numbers
+        // to show rather than rendering the empty state.
+        compressSourceURL = url
     }
 }
