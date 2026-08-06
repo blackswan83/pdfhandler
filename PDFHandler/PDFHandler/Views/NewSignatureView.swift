@@ -43,9 +43,13 @@ struct NewSignatureView: View {
     @State private var candidateImage: NSImage?
     @State private var statusMessage: String?
     @State private var showCanvas = false
-    /// For Import / Paste modes: knock out near-white pixels so a
-    /// scanned signature drops onto the PDF without an opaque card.
-    @State private var removeWhiteBackground: Bool = true
+    /// For Import / Paste: the untouched original, kept so the ink
+    /// extraction can be re-run at a different sensitivity without
+    /// compounding on its own output.
+    @State private var originalImage: NSImage?
+    @State private var isolateInk: Bool = true
+    @State private var inkSensitivity: Double = 0.5
+    @State private var extractionTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -75,22 +79,14 @@ struct NewSignatureView: View {
 
             HStack(alignment: .center, spacing: 12) {
                 if let image = candidateImage {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 180, height: 60)
-                        .padding(6)
-                        .background(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color.gray.opacity(0.4), lineWidth: 1)
-                        )
+                    // Previewed over a ruled line, which is the whole
+                    // point: it shows at a glance whether the
+                    // background is genuinely transparent or just white.
+                    SignaturePreview(image: image)
                 } else {
                     Text("No \(appState.newSignatureRole.displayName.lowercased()) yet.")
                         .foregroundStyle(.secondary)
-                        .frame(width: 180, alignment: .leading)
+                        .frame(width: 220, alignment: .leading)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -197,23 +193,83 @@ struct NewSignatureView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-            Toggle("Remove white background automatically", isOn: $removeWhiteBackground)
-                .font(.caption)
-            Text("PNG, JPEG or TIFF. Toggle on (default) to chroma-key the white out of scanned signatures.")
+            inkControls
+            Text("PNG, JPEG, TIFF or HEIC — a photo of a signature on paper works.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Ink isolation controls, shared by Import and Paste.
+    @ViewBuilder
+    private var inkControls: some View {
+        Toggle("Isolate ink from the paper", isOn: $isolateInk)
+            .font(.caption)
+            .onChange(of: isolateInk) { _ in reextract() }
+
+        if isolateInk {
+            HStack(spacing: 8) {
+                Text("Faint ink")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Slider(value: $inkSensitivity, in: 0...1)
+                    .frame(maxWidth: 200)
+                    .onChange(of: inkSensitivity) { _ in reextract() }
+                Text("Clean")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Text("Estimates the paper brightness locally, so shadows and uneven lighting are handled. Slide left to catch faint strokes, right to reject paper texture.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Re-runs extraction from the pristine original. Cancels any run
+    /// still in flight so dragging the slider does not queue work.
+    private func reextract() {
+        guard let original = originalImage else { return }
+        extractionTask?.cancel()
+        guard isolateInk else {
+            candidateImage = original
+            statusMessage = "Using the image as-is."
+            return
+        }
+        let sensitivity = inkSensitivity
+        statusMessage = "Isolating ink…"
+        extractionTask = Task {
+            let extracted = await Task.detached(priority: .userInitiated) {
+                SignatureExtractor.extract(
+                    from: original,
+                    options: SignatureExtractor.Options(sensitivity: sensitivity)
+                )
+            }.value
+            if Task.isCancelled { return }
+            await MainActor.run {
+                if let extracted {
+                    candidateImage = extracted
+                    statusMessage = "Ink isolated onto a transparent background."
+                } else {
+                    candidateImage = original
+                    statusMessage = "No clear ink found — using the image as-is."
+                }
+            }
         }
     }
 
     private func openImagePicker() {
         let panel = NSOpenPanel()
         panel.title = "Choose image"
-        panel.allowedContentTypes = [.png, .jpeg, .tiff]
+        // HEIC included: photographing a signature with an iPhone is
+        // the expected route, and that is what it produces.
+        panel.allowedContentTypes = [.png, .jpeg, .tiff, .heic, .image]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) {
+            originalImage = image
             candidateImage = image
             if name.isEmpty { name = url.deletingPathExtension().lastPathComponent }
+            reextract()
         }
     }
 
@@ -233,8 +289,7 @@ struct NewSignatureView: View {
             .buttonStyle(.plain)
             .keyboardShortcut("v", modifiers: .command)
 
-            Toggle("Remove white background automatically", isOn: $removeWhiteBackground)
-                .font(.caption)
+            inkControls
             Text("Copy any image (Preview, Photos, Mail, Screenshot), then click here (or press ⌘V).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -243,8 +298,10 @@ struct NewSignatureView: View {
 
     private func pasteFromClipboard() {
         if let image = NSImage(pasteboard: NSPasteboard.general) {
+            originalImage = image
             candidateImage = image
             statusMessage = "Pasted image from clipboard."
+            reextract()
         } else {
             statusMessage = "Clipboard does not contain an image."
         }
@@ -253,15 +310,11 @@ struct NewSignatureView: View {
     // MARK: - Save
 
     private func save() {
+        // candidateImage already carries the extraction result — what
+        // is previewed is exactly what is saved, so the preview cannot
+        // disagree with the stored asset.
         guard let image = candidateImage else { return }
-        // For Import / Paste modes, knock out white background when
-        // requested. Type / Draw already render onto a transparent
-        // canvas so they need no post-processing.
-        let needsKnockout = (inputMode == .upload || inputMode == .paste) && removeWhiteBackground
-        let finalImage = needsKnockout
-            ? (image.knockingOutWhiteBackground() ?? image)
-            : image
-        appState.addSignature(image: finalImage, name: name, role: appState.newSignatureRole)
+        appState.addSignature(image: image, name: name, role: appState.newSignatureRole)
         dismiss()
     }
 
@@ -282,6 +335,46 @@ struct NewSignatureView: View {
         (text as NSString).draw(at: NSPoint(x: 20, y: 10), withAttributes: attrs)
         image.unlockFocus()
         return image
+    }
+}
+
+/// Shows a candidate signature over a ruled line and body text, which
+/// is the only way to tell an isolated signature from one still
+/// sitting on a white card — against a plain background they look
+/// identical.
+private struct SignaturePreview: View {
+    let image: NSImage
+
+    var body: some View {
+        ZStack {
+            Rectangle().fill(Color.white)
+            VStack(alignment: .leading, spacing: 5) {
+                Spacer()
+                ForEach(0..<2, id: \.self) { _ in
+                    Rectangle()
+                        .fill(Color.black.opacity(0.30))
+                        .frame(height: 1.5)
+                        .padding(.trailing, 30)
+                }
+                Rectangle()
+                    .fill(Color.black.opacity(0.55))
+                    .frame(height: 1)
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+
+            Image(nsImage: image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .padding(6)
+        }
+        .frame(width: 220, height: 74)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(Color.gray.opacity(0.4), lineWidth: 1)
+        )
     }
 }
 

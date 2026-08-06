@@ -98,8 +98,10 @@ struct CompressView: View {
                         .truncationMode(.middle)
                 }
             }
-            .onDrop(of: [.pdf, .fileURL], isTargeted: nil) { providers in
-                loadFirstPDF(providers) { url in appState.compressSourceURL = url }
+            .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
+                PDFDrop.receive(providers) { urls in
+                    if let first = urls.first { appState.compressSourceURL = first }
+                }
             }
             Text("Or drag a PDF onto this panel.")
                 .font(.caption)
@@ -111,37 +113,83 @@ struct CompressView: View {
 
     private var optionsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Preset").font(.headline)
-            Picker("", selection: $appState.compressPreset) {
-                ForEach(GhostscriptPreset.allCases) { preset in
-                    Text(preset.displayName).tag(preset)
+            Text("Mode").font(.headline)
+            Picker("", selection: $appState.compressMode) {
+                ForEach(CompressMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            Text(appState.compressPreset.summary)
+            Text(appState.compressMode.summary)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Toggle("Convert to grayscale", isOn: $appState.compressGrayscale)
-
-            Divider()
-
-            Toggle("Compress to a target size", isOn: $appState.compressUseTargetSize)
-            if appState.compressUseTargetSize {
-                Text("Target: \(Int(appState.compressTargetFraction * 100))% of the original")
-                    .font(.subheadline)
-                Slider(value: $appState.compressTargetFraction, in: 0.1...0.9, step: 0.05) {
-                    Text("Target size")
-                } minimumValueLabel: {
-                    Text("10%").font(.caption2)
-                } maximumValueLabel: {
-                    Text("90%").font(.caption2)
-                }
-                Text("Runs several passes, searching for the highest image quality that still fits under the target. The preset above sets the starting quality.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if appState.compressMode.isTargetSize {
+                targetSizeControls
             }
+
+            estimateRow
+
+            Toggle("Convert to grayscale", isOn: $appState.compressGrayscale)
+        }
+    }
+
+    private var targetSizeControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Slider(value: $appState.compressTargetFraction, in: 0.1...0.9, step: 0.05) {
+                Text("Target size")
+            } minimumValueLabel: {
+                Text("10%").font(.caption2)
+            } maximumValueLabel: {
+                Text("90%").font(.caption2)
+            }
+            Text("Runs up to five passes, searching image resolution for the highest quality that still fits.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Source size against the expected output, updating live as the
+    /// target slider moves. For the quality presets there is no honest
+    /// single number — the outcome depends entirely on what is inside
+    /// the file — so a clearly-labelled typical range is shown instead
+    /// of a figure that would look authoritative and often be wrong.
+    @ViewBuilder
+    private var estimateRow: some View {
+        let source = appState.compressSourceSize
+        if source > 0 {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.right.circle")
+                    .foregroundStyle(.secondary)
+                Text(byteString(source))
+                    .font(.system(.body, design: .monospaced))
+                Text("→")
+                    .foregroundStyle(.secondary)
+
+                if appState.compressMode.isTargetSize {
+                    let target = Int64(Double(source) * appState.compressTargetFraction)
+                    Text(byteString(target))
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(Color.accentColor)
+                    Text("target")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let range = appState.compressMode.typicalRange {
+                    let low = Int64(Double(source) * range.lowerBound)
+                    let high = Int64(Double(source) * range.upperBound)
+                    Text("\(byteString(low)) – \(byteString(high))")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Text("typical for image-heavy PDFs")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
     }
 
@@ -172,7 +220,7 @@ struct CompressView: View {
                 appState.runCompression()
             } label: {
                 if appState.compressIsRunning {
-                    Label(appState.compressUseTargetSize ? "Searching…" : "Compressing…",
+                    Label(appState.compressMode.isTargetSize ? "Searching…" : "Compressing…",
                           systemImage: "gearshape").labelStyle(.titleAndIcon)
                 } else {
                     Label("Compress", systemImage: "arrow.down.circle.fill").labelStyle(.titleAndIcon)
@@ -238,21 +286,6 @@ struct CompressView: View {
         if panel.runModal() == .OK, let url = panel.url {
             appState.compressSourceURL = url
         }
-    }
-
-    private func loadFirstPDF(_ providers: [NSItemProvider], onLoaded: @escaping (URL) -> Void) -> Bool {
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
-                    guard let data = data as? Data,
-                          let url = URL(dataRepresentation: data, relativeTo: nil),
-                          url.pathExtension.lowercased() == "pdf" else { return }
-                    Task { @MainActor in onLoaded(url) }
-                }
-                return true
-            }
-        }
-        return false
     }
 
     private func byteString(_ bytes: Int64) -> String {

@@ -70,6 +70,60 @@ enum GhostscriptPreset: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// What the Compress pane is set to do. Target-size sits alongside the
+/// quality presets rather than modifying them: it searches for a
+/// resolution rather than accepting the preset's, so presenting it as
+/// a modifier of one implied a relationship that does not exist.
+enum CompressMode: String, CaseIterable, Identifiable, Codable {
+    case prepress, printer, ebook, screen, targetSize
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .prepress:   return "Prepress"
+        case .printer:    return "Printer"
+        case .ebook:      return "eBook"
+        case .screen:     return "Screen"
+        case .targetSize: return "Target size"
+        }
+    }
+
+    var preset: GhostscriptPreset {
+        switch self {
+        case .prepress:   return .prepress
+        case .printer:    return .printer
+        case .ebook:      return .ebook
+        case .screen:     return .screen
+        // Start the search from the top so quality is bought back as
+        // far as the target allows.
+        case .targetSize: return .printer
+        }
+    }
+
+    var isTargetSize: Bool { self == .targetSize }
+
+    var summary: String {
+        isTargetSize
+            ? "Searches image resolution for the best quality that fits your target."
+            : preset.summary
+    }
+
+    /// Typical output as a fraction of the original for image-heavy
+    /// PDFs. A range, and labelled as typical, because the true figure
+    /// depends entirely on what is inside the file — a text-only PDF
+    /// barely moves.
+    var typicalRange: ClosedRange<Double>? {
+        switch self {
+        case .prepress:   return 0.75...1.0
+        case .printer:    return 0.5...0.85
+        case .ebook:      return 0.25...0.6
+        case .screen:     return 0.1...0.35
+        case .targetSize: return nil
+        }
+    }
+}
+
 // MARK: - Result + errors
 
 struct CompressionResult {

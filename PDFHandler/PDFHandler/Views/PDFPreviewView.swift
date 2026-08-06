@@ -116,8 +116,13 @@ struct PDFPreviewView: View {
                 )
 
             ForEach(appState.placements(onPage: pageIndex)) { placement in
-                PlacementView(placement: placement, pageSize: display)
-                    .environmentObject(appState)
+                PlacementView(
+                    placement: placement,
+                    pageSize: display,
+                    pageScale: page.displaySize.width > 0
+                        ? display.width / page.displaySize.width : 1
+                )
+                .environmentObject(appState)
             }
         }
         .frame(width: display.width, height: display.height)

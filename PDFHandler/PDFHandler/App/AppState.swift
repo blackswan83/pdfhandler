@@ -183,23 +183,81 @@ final class AppState: ObservableObject {
     // the box stays square in page points.
     @AppStorage("lastSize.checkbox.w")  private var lastSizeCheckboxW:  Double = 0.03
 
+    // MARK: Text styling (persisted; new text fields inherit it)
+    @AppStorage("text.font")     private var storedTextFont: String = TextFont.system.rawValue
+    @AppStorage("text.size")     private var storedTextSize: Double = 12
+    @AppStorage("text.autoFit")  private var storedTextAutoFit: Bool = true
+
+    /// Style applied to newly placed text fields, and the target of
+    /// the inspector when nothing is selected.
+    var defaultTextStyle: TextStyle {
+        get {
+            TextStyle(
+                font: TextFont(rawValue: storedTextFont) ?? .system,
+                size: CGFloat(storedTextSize),
+                autoFit: storedTextAutoFit
+            )
+        }
+        set {
+            storedTextFont = newValue.font.rawValue
+            storedTextSize = Double(newValue.size)
+            storedTextAutoFit = newValue.autoFit
+        }
+    }
+
+    /// Style shown in the inspector: the selected field's if a text
+    /// field is selected, otherwise the default for the next one.
+    var inspectorTextStyle: TextStyle {
+        selectedTextPlacement?.content.textPayload?.style ?? defaultTextStyle
+    }
+
+    var selectedTextPlacement: Placement? {
+        guard let id = selectedPlacementID,
+              let placement = placements.first(where: { $0.id == id }),
+              placement.content.textPayload != nil
+        else { return nil }
+        return placement
+    }
+
+    /// Apply a style to the selected text field, or set the default
+    /// for future ones when nothing is selected.
+    func applyTextStyle(_ style: TextStyle) {
+        defaultTextStyle = style
+        guard let placement = selectedTextPlacement,
+              let idx = placements.firstIndex(where: { $0.id == placement.id })
+        else {
+            objectWillChange.send()
+            return
+        }
+        undoCoordinator.apply("Text Style") {
+            placements[idx].content = placements[idx].content.withStyle(style)
+        }
+    }
+
+    // MARK: Save options
+    /// Also write a copy with every field except the signature and
+    /// initials images — the "filled but not yet signed" version.
+    @AppStorage("save.alsoUnsignedCopy") var alsoSaveUnsignedCopy: Bool = false
+
     // MARK: Compress mode
     @Published var compressSourceURL: URL? {
         didSet {
             compressSourceIsSigned = compressSourceURL.map {
                 CompressionService.carriesDigitalSignature(url: $0)
             } ?? false
+            compressSourceSize = compressSourceURL.map {
+                CompressionService.fileSize($0)
+            } ?? 0
             compressResult = nil
             compressError = nil
         }
     }
-    @Published var compressPreset: GhostscriptPreset = .ebook
+    @Published var compressMode: CompressMode = .ebook
     @Published var compressGrayscale: Bool = false
-    /// Aim for a specific fraction of the original size, searching for
-    /// the highest image quality that fits, instead of trusting a
-    /// preset to land somewhere useful.
-    @Published var compressUseTargetSize: Bool = false
     @Published var compressTargetFraction: Double = 0.5
+    /// Size of the chosen source, read once on selection so the pane
+    /// can show what the output is being compared against.
+    @Published private(set) var compressSourceSize: Int64 = 0
     /// The chosen PDF carries a cryptographic signature, which no
     /// re-compressor can preserve.
     @Published private(set) var compressSourceIsSigned: Bool = false
@@ -330,6 +388,25 @@ final class AppState: ObservableObject {
     /// Replaces the in-memory library without touching the on-disk
     /// index. Used only by the --screenshot-demo development mode, so
     /// running it can never disturb a real user's saved signatures.
+    /// Where the signature library lives on disk. Outside the app
+    /// bundle, which is why it survives deleting and reinstalling the
+    /// app — standard macOS behaviour for user data.
+    var signatureLibraryURL: URL { library.indexURL }
+
+    func revealSignatureLibrary() {
+        NSWorkspace.shared.activateFileViewerSelecting([library.indexURL])
+    }
+
+    /// Erase every saved signature and initials entry, on disk too.
+    func eraseSignatureLibrary() {
+        signatures = []
+        activeSignatureID = nil
+        activeInitialsID = nil
+        placements.removeAll { $0.content.referencedSignatureID != nil }
+        library.save([])
+        undoCoordinator.reset()
+    }
+
     func replaceLibraryInMemory(_ entries: [SavedSignature]) {
         signatures = entries
         activeSignatureID = entries.first(where: { $0.role == .signature })?.id
@@ -363,21 +440,21 @@ final class AppState: ObservableObject {
         let (content, size): (PlacementContent, CGSize) = {
             switch activeTool {
             case .signature:
-                guard let id = activeSignatureID else { return (.freeText(text: ""), .zero) }
+                guard let id = activeSignatureID else { return (.freeText(text: "", style: defaultTextStyle), .zero) }
                 return (.signature(signatureID: id),
                         imageSize(widthFraction: lastSizeSignatureW, signatureID: id))
             case .initials:
-                guard let id = activeInitialsID else { return (.freeText(text: ""), .zero) }
+                guard let id = activeInitialsID else { return (.freeText(text: "", style: defaultTextStyle), .zero) }
                 return (.initials(signatureID: id),
                         imageSize(widthFraction: lastSizeInitialsW, signatureID: id))
             case .date:
-                return (.date(text: todayText()),
+                return (.date(text: todayText(), style: defaultTextStyle),
                         CGSize(width: lastSizeDateW, height: lastSizeDateH))
             case .freeText:
                 // Empty text: the preview shows a placeholder and the
                 // flattener skips empty fields, so an untouched box
                 // never burns literal filler into the document.
-                return (.freeText(text: ""),
+                return (.freeText(text: "", style: defaultTextStyle),
                         CGSize(width: lastSizeFreeTextW, height: lastSizeFreeTextH))
             case .checkbox:
                 // Height derived from width so the box is square in
@@ -526,10 +603,30 @@ final class AppState: ObservableObject {
         }
         editingPlacementID = nil // commit any in-progress text edit
         do {
-            let output = try flattener.flatten(document: document, sourceURL: source, placements: placements, signatures: signatures)
+            let output = try flattener.flatten(
+                document: document, sourceURL: source,
+                placements: placements, signatures: signatures
+            )
+
+            // Optional "filled but not signed" companion: every field
+            // except the signature and initials images. The untouched
+            // original remains the third copy.
+            var revealed = [output]
+            if alsoSaveUnsignedCopy {
+                let unsigned = placements.filter { !$0.content.isImageBacked }
+                if !unsigned.isEmpty {
+                    let filled = try flattener.flatten(
+                        document: document, sourceURL: source,
+                        placements: unsigned, signatures: signatures,
+                        outputSuffix: "_filled"
+                    )
+                    revealed.append(filled)
+                }
+            }
+
             lastSavedURL = output
             errorMessage = nil
-            NSWorkspace.shared.activateFileViewerSelecting([output])
+            NSWorkspace.shared.activateFileViewerSelecting(revealed)
             Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 if let self, self.lastSavedURL == output {
@@ -555,9 +652,9 @@ final class AppState: ObservableObject {
         compressResult = nil
         compressGhostscriptMissing = false
 
-        let preset = compressPreset
+        let preset = compressMode.preset
         let grayscale = compressGrayscale
-        let target = compressUseTargetSize ? compressTargetFraction : nil
+        let target = compressMode.isTargetSize ? compressTargetFraction : nil
 
         Task { [weak self] in
             guard let self else { return }

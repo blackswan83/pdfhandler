@@ -16,6 +16,7 @@ import AppKit
 struct LibrarySidebarSections: View {
     @EnvironmentObject var appState: AppState
     @State private var pendingDelete: SavedSignature?
+    @State private var confirmErase = false
 
     var body: some View {
         Section("Signatures") {
@@ -39,6 +40,7 @@ struct LibrarySidebarSections: View {
                 appState.newSignatureRole = .initials
                 appState.isPresentingNewSignature = true
             }
+            storageRow
         }
         .confirmationDialog(
             "Delete \"\(pendingDelete?.name ?? "")\"?",
@@ -79,6 +81,33 @@ struct LibrarySidebarSections: View {
                     onDelete: { pendingDelete = entry }
                 )
             }
+        }
+    }
+
+    /// The library lives in Application Support, outside the app
+    /// bundle, so it survives deleting and reinstalling the app.
+    /// Surfacing that here — rather than leaving people to wonder why
+    /// old signatures reappear — plus a way to clear it.
+    @ViewBuilder
+    private var storageRow: some View {
+        Menu {
+            Button("Reveal library in Finder…") { appState.revealSignatureLibrary() }
+            Divider()
+            Button("Erase all signatures…", role: .destructive) { confirmErase = true }
+        } label: {
+            Label("Library storage", systemImage: "externaldrive")
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .help(appState.signatureLibraryURL.path)
+        .confirmationDialog(
+            "Erase every saved signature and initials entry?",
+            isPresented: $confirmErase
+        ) {
+            Button("Erase", role: .destructive) { appState.eraseSignatureLibrary() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This deletes them from \(appState.signatureLibraryURL.path) and removes any fields using them. It cannot be undone.")
         }
     }
 

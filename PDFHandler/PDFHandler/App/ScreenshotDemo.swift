@@ -181,12 +181,12 @@ extension AppState {
                 normalizedRect: CGRect(x: 0.115, y: 0.640, width: 0.30, height: 0.055)
             ),
             Placement(
-                content: .date(text: formatter.string(from: Date())),
+                content: .date(text: formatter.string(from: Date()), style: .default),
                 pageIndex: 0,
                 normalizedRect: CGRect(x: 0.540, y: 0.652, width: 0.235, height: 0.026)
             ),
             Placement(
-                content: .freeText(text: "Nuraxi Ltd"),
+                content: .freeText(text: "Nuraxi Ltd", style: .default),
                 pageIndex: 0,
                 normalizedRect: CGRect(x: 0.265, y: 0.716, width: 0.30, height: 0.026)
             ),

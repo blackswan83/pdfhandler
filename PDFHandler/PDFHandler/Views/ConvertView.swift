@@ -58,8 +58,10 @@ struct ConvertView: View {
                         .truncationMode(.middle)
                 }
             }
-            .onDrop(of: [.pdf, .fileURL], isTargeted: nil) { providers in
-                loadFirstPDF(providers) { url in appState.convertSourceURL = url }
+            .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
+                PDFDrop.receive(providers) { urls in
+                    if let first = urls.first { appState.convertSourceURL = first }
+                }
             }
             Text("Or drag a PDF onto this panel.")
                 .font(.caption)
@@ -166,18 +168,4 @@ struct ConvertView: View {
         }
     }
 
-    private func loadFirstPDF(_ providers: [NSItemProvider], onLoaded: @escaping (URL) -> Void) -> Bool {
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
-                    guard let data = data as? Data,
-                          let url = URL(dataRepresentation: data, relativeTo: nil),
-                          url.pathExtension.lowercased() == "pdf" else { return }
-                    Task { @MainActor in onLoaded(url) }
-                }
-                return true
-            }
-        }
-        return false
-    }
 }

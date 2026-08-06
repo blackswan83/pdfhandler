@@ -19,9 +19,21 @@ struct ContentView: View {
             detailPane
         }
         .navigationSplitViewStyle(.balanced)
+        // Whole-window drop target: dropping a PDF anywhere opens it,
+        // switching to Sign mode. Previously only the preview area
+        // accepted drops, so dropping on the sidebar or toolbar — or
+        // on the empty-state pane in another mode — did nothing.
+        .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
+            PDFDrop.receive(providers) { urls in
+                openDropped(urls)
+            }
+        }
         .sheet(isPresented: $appState.isPresentingNewSignature) {
             NewSignatureView()
                 .environmentObject(appState)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openDocumentURLs)) { note in
+            if let urls = note.object as? [URL] { openDropped(urls) }
         }
         .onAppear {
             // Development scaffolding for CI screenshot capture; a
@@ -84,6 +96,26 @@ struct ContentView: View {
         case .compress: CompressView()
         case .merge:    MergeView()
         case .convert:  ConvertView()
+        }
+    }
+
+    // MARK: - Opening dropped / externally-opened files
+
+    /// Routes dropped PDFs to whichever mode makes sense: Merge
+    /// accumulates a queue, everything else takes the first file and
+    /// switches to Sign, since that is what dropping a contract onto
+    /// a signing app is asking for.
+    private func openDropped(_ urls: [URL]) {
+        guard let first = urls.first else { return }
+        switch appState.mode {
+        case .merge:
+            appState.mergeItems.append(contentsOf: urls.map { MergeItem(url: $0) })
+        case .compress:
+            appState.compressSourceURL = first
+        case .convert:
+            appState.convertSourceURL = first
+        case .sign:
+            appState.openDocument(at: first)
         }
     }
 
