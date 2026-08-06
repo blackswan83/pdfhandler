@@ -23,9 +23,9 @@ struct MergeView: View {
                 } label: {
                     Label("Add PDFs…", systemImage: "plus")
                 }
-                if !appState.mergeSourceURLs.isEmpty {
+                if !appState.mergeItems.isEmpty {
                     Button(role: .destructive) {
-                        appState.mergeSourceURLs.removeAll()
+                        appState.mergeItems.removeAll()
                     } label: {
                         Label("Clear", systemImage: "trash")
                     }
@@ -53,7 +53,7 @@ struct MergeView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(appState.mergeSourceURLs.count < 2 || appState.mergeIsRunning)
+                .disabled(appState.mergeItems.count < 2 || appState.mergeIsRunning)
 
                 if appState.mergeIsRunning {
                     ProgressView(value: appState.mergeProgress).frame(maxWidth: 220)
@@ -90,37 +90,37 @@ struct MergeView: View {
 
     @ViewBuilder
     private var list: some View {
-        if appState.mergeSourceURLs.isEmpty {
+        if appState.mergeItems.isEmpty {
             dropPlaceholder
         } else {
             List {
-                ForEach(Array(appState.mergeSourceURLs.enumerated()), id: \.offset) { index, url in
-                    row(index: index, url: url)
+                ForEach(appState.mergeItems) { item in
+                    row(item)
                 }
                 .onMove { indices, newOffset in
-                    appState.mergeSourceURLs.move(fromOffsets: indices, toOffset: newOffset)
+                    appState.mergeItems.move(fromOffsets: indices, toOffset: newOffset)
                 }
                 .onDelete { indexSet in
-                    appState.mergeSourceURLs.remove(atOffsets: indexSet)
+                    appState.mergeItems.remove(atOffsets: indexSet)
                 }
             }
             .frame(minHeight: 200, idealHeight: 280)
             .listStyle(.bordered)
             .onDrop(of: [.pdf, .fileURL], isTargeted: nil) { providers in
                 loadPDFs(providers) { urls in
-                    appState.mergeSourceURLs.append(contentsOf: urls)
+                    appState.mergeItems.append(contentsOf: urls.map { MergeItem(url: $0) })
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func row(index: Int, url: URL) -> some View {
+    private func row(_ item: MergeItem) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "doc.fill").foregroundStyle(Color.accentColor)
             VStack(alignment: .leading, spacing: 2) {
-                Text(url.lastPathComponent).font(.body)
-                Text(url.deletingLastPathComponent().path)
+                Text(item.url.lastPathComponent).font(.body)
+                Text(item.url.deletingLastPathComponent().path)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -128,7 +128,7 @@ struct MergeView: View {
             }
             Spacer()
             Button(role: .destructive) {
-                appState.mergeSourceURLs.remove(at: index)
+                appState.mergeItems.removeAll { $0.id == item.id }
             } label: {
                 Image(systemName: "minus.circle")
             }
@@ -151,7 +151,7 @@ struct MergeView: View {
         )
         .onDrop(of: [.pdf, .fileURL], isTargeted: nil) { providers in
             loadPDFs(providers) { urls in
-                appState.mergeSourceURLs.append(contentsOf: urls)
+                appState.mergeItems.append(contentsOf: urls.map { MergeItem(url: $0) })
             }
         }
     }
@@ -189,29 +189,39 @@ struct MergeView: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
         if panel.runModal() == .OK {
-            appState.mergeSourceURLs.append(contentsOf: panel.urls)
+            appState.mergeItems.append(contentsOf: panel.urls.map { MergeItem(url: $0) })
         }
     }
 
     private func loadPDFs(_ providers: [NSItemProvider], onLoaded: @escaping ([URL]) -> Void) -> Bool {
         var acceptedAny = false
-        var collected: [URL] = []
+        var collected: [(Int, URL)] = []
         let group = DispatchGroup()
-        for provider in providers {
+        for (order, provider) in providers.enumerated() {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 acceptedAny = true
                 group.enter()
                 provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
-                    defer { group.leave() }
                     guard let data = data as? Data,
                           let url = URL(dataRepresentation: data, relativeTo: nil),
-                          url.pathExtension.lowercased() == "pdf" else { return }
-                    collected.append(url)
+                          url.pathExtension.lowercased() == "pdf" else {
+                        group.leave()
+                        return
+                    }
+                    // Providers call back on arbitrary queues and in
+                    // arbitrary order; serialize through the main queue
+                    // and restore the drop order (row order defines the
+                    // merged page order).
+                    DispatchQueue.main.async {
+                        collected.append((order, url))
+                        group.leave()
+                    }
                 }
             }
         }
         group.notify(queue: .main) {
-            if !collected.isEmpty { onLoaded(collected) }
+            let urls = collected.sorted { $0.0 < $1.0 }.map(\.1)
+            if !urls.isEmpty { onLoaded(urls) }
         }
         return acceptedAny
     }

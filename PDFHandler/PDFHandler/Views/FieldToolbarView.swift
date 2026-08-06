@@ -15,6 +15,19 @@ struct FieldToolbarView: View {
         HStack(spacing: 8) {
             ForEach(FieldTool.allCases) { tool in
                 Button {
+                    // Picking the signature / initials tool with an
+                    // empty library opens the creation sheet instead
+                    // of dead-ending on a disabled button.
+                    switch tool {
+                    case .signature where appState.activeSignatureID == nil:
+                        appState.newSignatureRole = .signature
+                        appState.isPresentingNewSignature = true
+                    case .initials where appState.activeInitialsID == nil:
+                        appState.newSignatureRole = .initials
+                        appState.isPresentingNewSignature = true
+                    default:
+                        break
+                    }
                     appState.activeTool = tool
                 } label: {
                     VStack(spacing: 4) {
@@ -38,7 +51,6 @@ struct FieldToolbarView: View {
                     .foregroundStyle(appState.activeTool == tool ? Color.accentColor : Color.primary)
                 }
                 .buttonStyle(.plain)
-                .disabled(isDisabled(tool))
                 .help(helpText(for: tool))
             }
             Spacer()
@@ -52,30 +64,28 @@ struct FieldToolbarView: View {
     private var hint: some View {
         switch appState.activeTool {
         case .signature:
-            needsAssetText("Pick a Signature in the sidebar, then click the page to place it.",
+            needsAssetText("Click the page to place your signature. Drag to move, corner knob to resize.",
+                           missing: "No signature yet — click the page to create one.",
                            hasAsset: appState.activeSignatureID != nil)
         case .initials:
-            needsAssetText("Pick an Initials asset in the sidebar, then click the page.",
+            needsAssetText("Click the page to place your initials.",
+                           missing: "No initials yet — click the page to create them.",
                            hasAsset: appState.activeInitialsID != nil)
-        case .date, .freeText, .checkbox:
-            Text("Click the page to place a \(appState.activeTool.displayName.lowercased()).")
+        case .date, .freeText:
+            Text("Click the page to place. Double-click the field to edit its text; ⌫ deletes, arrows nudge.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .checkbox:
+            Text("Click the page to place a checkbox; click it to toggle.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
     }
 
-    private func needsAssetText(_ text: String, hasAsset: Bool) -> some View {
-        Text(hasAsset ? text.replacingOccurrences(of: "Pick ", with: "Click the page to place. Or pick ") : text)
+    private func needsAssetText(_ text: String, missing: String, hasAsset: Bool) -> some View {
+        Text(hasAsset ? text : missing)
             .font(.caption)
-            .foregroundStyle(hasAsset ? .secondary : Color.orange)
-    }
-
-    private func isDisabled(_ tool: FieldTool) -> Bool {
-        switch tool {
-        case .signature: return appState.activeSignatureID == nil
-        case .initials:  return appState.activeInitialsID  == nil
-        default: return false
-        }
+            .foregroundStyle(hasAsset ? Color.secondary : Color.orange)
     }
 
     private func helpText(for tool: FieldTool) -> String {

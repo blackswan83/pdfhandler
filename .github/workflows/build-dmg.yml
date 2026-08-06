@@ -27,6 +27,11 @@ jobs:
           swift --version
           xcode-select -p
 
+      - name: Run tests
+        run: |
+          cd PDFHandler
+          swift test
+
       - name: Build DMG (capturing log)
         id: build
         run: |
@@ -85,6 +90,76 @@ jobs:
                   "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/comments" \
                   > /dev/null
           fi
+
+      - name: Capture screenshots
+        # Best-effort: GUI capture on a hosted runner can be blocked by
+        # TCC or run without a window server. Never fail the build for
+        # it — the DMG is the deliverable, screenshots are a bonus.
+        continue-on-error: true
+        run: |
+          set -x
+          mkdir -p build/screenshots
+
+          # Capture one window per mode. Each mode gets its own launch
+          # rather than being clicked through with accessibility
+          # automation, which failed silently and captured the same
+          # pane twice.
+          capture () {
+            local mode="$1" out="$2"
+            open build/PDFHandler.app --args --screenshot-demo --screenshot-mode "$mode"
+            sleep 10
+            osascript -e 'tell application "System Events" to set frontmost of process "PDFHandler" to true' || true
+            sleep 2
+
+            # Window-only shot via its geometry rather than `-l <id>`:
+            # System Events window ids are not CGWindowIDs.
+            local geom
+            geom=$(osascript -e 'tell application "System Events" to tell process "PDFHandler" to get {position of window 1, size of window 1}' 2>/dev/null | tr -d ' ' || echo "")
+            if [[ "$geom" =~ ^-?[0-9]+,-?[0-9]+,[0-9]+,[0-9]+$ ]]; then
+              screencapture -x -R "$geom" "build/screenshots/$out" || true
+            else
+              echo "could not read window geometry for $mode: '$geom'"
+              screencapture -x "build/screenshots/$out" || true
+            fi
+
+            osascript -e 'tell application "PDFHandler" to quit' || killall PDFHandler || true
+            sleep 3
+          }
+
+          capture sign     01-sign.png
+          capture compress 02-compress.png
+          capture merge    03-merge.png
+          capture convert  04-convert.png
+
+          ls -la build/screenshots || true
+
+          # Distinctness check: identical byte sizes across modes mean
+          # the mode switch silently did nothing, which is exactly the
+          # failure this rewrite fixes. Report it rather than shipping
+          # duplicate images that look like success.
+          shasum -a 256 build/screenshots/*.png || true
+
+          # Emit a downscaled preview into the log. The artifact blob
+          # host is unreachable from some environments, so this is the
+          # only channel that always survives.
+          for shot in 01-sign 02-compress; do
+            src="build/screenshots/${shot}.png"
+            [[ -f "$src" ]] || continue
+            sips -Z 560 -s format jpeg -s formatOptions 45 "$src" --out "/tmp/${shot}.jpg" >/dev/null 2>&1 || continue
+            echo "----BEGIN-PREVIEW ${shot}----"
+            base64 -i "/tmp/${shot}.jpg" | tr -d '\n' | fold -w 240
+            echo ""
+            echo "----END-PREVIEW ${shot}----"
+          done
+
+      - name: Upload screenshots
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: build/screenshots
+          if-no-files-found: warn
 
       - name: Upload build log
         if: always()

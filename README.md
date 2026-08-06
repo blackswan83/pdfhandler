@@ -37,21 +37,44 @@ Then double-click to launch.
    - **Paste** — whatever image is on the clipboard (⌘V).
 2. Open a PDF (⌘O, or drop it onto the window).
 3. Pick a field type in the palette above the preview: **Signature**, **Initials**, **Date**, **Free text**, **Checkbox**.
-4. Click on the page to drop a placement. Drag the body to move it, drag the bottom-right handle to resize. Right-click for **Apply to every page** (handy for initials or a date stamp on long contracts).
+4. Click on the page to drop a placement.
+   - **Move** — drag the body. **Resize** — drag the corner knob (images and checkboxes keep their aspect; text boxes resize freely and the text scales with the box).
+   - **Edit text** — double-click a Date or Free-text field, type, then press Return or click elsewhere.
+   - **Keyboard** — ⌫ deletes the selected field, Esc deselects, arrow keys nudge by 1 pt (⇧-arrows by 10 pt).
+   - **Zoom** — ⌘+ / ⌘− to step, ⌘0 for actual size, ⌘9 to fit the window, or pinch on a trackpad. The toolbar shows the current level and lets you pick one directly. Zoom keeps the selected field centered, so you can zoom in to align a signature with a printed rule and nudge it into place.
+   - Right-click for **Apply to every page** (handy for initials or a date stamp on long contracts).
 5. ⌘Z / ⌘⇧Z to undo / redo.
-6. ⌘S writes `<name>_signed.pdf` next to the original and reveals it in Finder.
+6. ⌘S writes `<name>_signed.pdf` next to the original and reveals it in Finder. Fields are burned in permanently (flattened), so they show up in any PDF viewer.
 
 Library lives at `~/Library/Application Support/PDFHandler/signatures.json`.
 
 ### Compress
 
-Pick a PDF, choose a preset (slider nudges the preset automatically), optionally toggle grayscale / preserve metadata, **Compress**. Output: `<name>_compressed.pdf` next to the source.
+Pick a PDF, choose a preset, optionally toggle grayscale, **Compress**. Output: `<name>_compressed.pdf` next to the source.
 
-Requires Ghostscript. The app detects it automatically at `/opt/homebrew/bin/gs`, `/usr/local/bin/gs`, `/usr/bin/gs`, `/opt/local/bin/gs`, `/sw/bin/gs`, or via `which gs`. If it's missing the compress pane shows a card with a one-click copy of:
+Turn on **Compress to a target size** to name a percentage of the original instead: the app runs several Ghostscript passes, binary-searching image resolution for the highest quality that still fits under the target, and reports the DPI it settled on. If even the most aggressive setting overshoots — normal for text-only PDFs, which have no images to shrink — it says so rather than pretending.
+
+Beyond the stock presets (which only *name* a resolution), the app enables image downsampling, deduplicates repeated images, subsets fonts, and emits PDF 1.7 so the file structure itself is compressed. Bilevel scan content keeps a 300 DPI floor so scanned text stays legible even at aggressive settings.
+
+**Digitally signed PDFs:** compression rewrites the file and therefore breaks its cryptographic signature — that is inherent to re-compression, not specific to this app. The app detects signed input and warns before you run it. The original is never modified.
+
+Requires Ghostscript. The app looks for a copy bundled inside the app first, then at `/opt/homebrew/bin/gs`, `/usr/local/bin/gs`, `/usr/bin/gs`, `/opt/local/bin/gs`, `/sw/bin/gs`, or via `which gs`. If it's missing the compress pane shows a card with a one-click copy of:
 
 ```bash
 brew install ghostscript
 ```
+
+### Embedding Ghostscript (optional, personal builds)
+
+To make Compress work with no Homebrew prerequisite on the machine you install to:
+
+```bash
+BUNDLE_GHOSTSCRIPT=1 ./scripts/build-dmg.sh
+```
+
+This vendors the `gs` on your build machine into the app: the executable into `Contents/MacOS/`, every non-system dylib it needs (transitively) into `Contents/Frameworks/` with load commands rewritten to `@executable_path`, and the `Resource/` tree into `Contents/Resources/ghostscript/`. Adds roughly 30–50 MB.
+
+**It is off by default, deliberately.** Ghostscript is AGPLv3. Copyleft attaches to *distribution*, not to use — a build you make and install on your own machine carries no obligation whatsoever. But publishing the result to anyone else does: Artifex's position is that shipping Ghostscript with an application requires that application to be AGPL as well, or a commercial licence from them. This repo is MIT and its CI publishes release DMGs, so the default build produces no Ghostscript inside the app. Leave it that way unless you have relicensed the project or hold a commercial licence.
 
 ### Merge
 
@@ -59,7 +82,7 @@ Add PDFs (button or drag), drag rows to reorder, set the output name, **Merge**.
 
 ### Convert to Markdown
 
-Pick a PDF, toggle options (YAML frontmatter, extract images, OCR, OCR languages, table fallback), **Convert**. Output: `<name>.md` next to the source plus a companion `<name>_images/` directory of figures.
+Pick a PDF, toggle options (YAML frontmatter, full-page images, OCR, OCR languages), **Convert**. Output: `<name>.md` next to the source (never overwriting an existing file), plus an optional companion `<name>_images/` directory of page images.
 
 OCR is Vision-based; it kicks in only for pages whose text layer is empty / very short. No cloud calls.
 

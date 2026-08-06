@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 
 struct SignWorkspaceView: View {
     @EnvironmentObject var appState: AppState
+    @State private var keyMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,28 +34,103 @@ struct SignWorkspaceView: View {
                 banner("Saved to \(saved.lastPathComponent)", style: .info)
             }
         }
+        .onAppear { installKeyMonitor() }
+        .onDisappear { removeKeyMonitor() }
+    }
+
+    // MARK: - Keyboard (⌫ delete, Esc deselect, arrow nudge)
+
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            assumingMainActor { handleKeyDown(event) } ? nil : event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+        }
+    }
+
+    @MainActor
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard appState.mode == .sign else { return false }
+        // Stay out of the way while a sheet is up.
+        guard event.window?.sheetParent == nil else { return false }
+
+        // Zoom. Command-modified keys never insert text, so these are
+        // safe to handle even while a field is being edited. Local
+        // monitors see the event before menu key equivalents, which is
+        // how ⌘= works as an alias for the menu's ⌘+.
+        if event.modifierFlags.contains(.command), appState.document != nil {
+            switch event.charactersIgnoringModifiers {
+            case "=", "+": appState.zoomIn();          return true
+            case "-":      appState.zoomOut();         return true
+            case "0":      appState.zoomToActualSize(); return true
+            case "9":      appState.zoomToFit();       return true
+            default: break
+            }
+        }
+
+        // Everything below drives the selected placement, so stay clear
+        // of the window's field editor.
+        if NSApp.keyWindow?.firstResponder is NSTextView { return false }
+        guard appState.selectedPlacementID != nil else { return false }
+
+        switch event.keyCode {
+        case 51, 117: // delete / forward delete
+            appState.removeSelectedPlacement()
+            return true
+        case 53: // escape
+            appState.selectedPlacementID = nil
+            return true
+        case 123, 124, 125, 126: // ← → ↓ ↑
+            let step: CGFloat = event.modifierFlags.contains(.shift) ? 10 : 1
+            let (dx, dy): (CGFloat, CGFloat)
+            switch event.keyCode {
+            case 123: (dx, dy) = (-step, 0)
+            case 124: (dx, dy) = (step, 0)
+            case 125: (dx, dy) = (0, step)
+            default:  (dx, dy) = (0, -step)
+            }
+            appState.nudgeSelectedPlacement(dxPoints: dx, dyPoints: dy)
+            return true
+        default:
+            return false
+        }
     }
 
     // MARK: - Toolbar
 
     private var toolbar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button {
                 openPDF()
             } label: {
                 Label("Open PDF", systemImage: "folder")
             }
+            .layoutPriority(1)
 
             if let url = appState.documentURL {
+                // Lowest layout priority and a hard cap: at the 960pt
+                // minimum window width something has to give, and the
+                // filename is the one thing here that is disposable.
+                // Without this the Save button truncated instead.
                 Text(url.lastPathComponent)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .frame(maxWidth: 200)
+                    .layoutPriority(-1)
+                    .help(url.path)
             }
 
-            Spacer()
+            Spacer(minLength: 4)
 
+            zoomControls
             pagePicker
 
             Button {
@@ -64,9 +140,50 @@ struct SignWorkspaceView: View {
             }
             .keyboardShortcut("s", modifiers: .command)
             .disabled(appState.document == nil || appState.placements.isEmpty)
+            .fixedSize()
+            .layoutPriority(2)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var zoomControls: some View {
+        if appState.document != nil {
+            HStack(spacing: 2) {
+                Button {
+                    appState.zoomOut()
+                } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!appState.canZoomOut)
+                .help("Zoom out (⌘−)")
+
+                Menu(appState.zoomLabel) {
+                    Button("Zoom to Fit") { appState.zoomToFit() }
+                    Button("Actual Size") { appState.zoomToActualSize() }
+                    Divider()
+                    ForEach(ZoomScale.stops, id: \.self) { stop in
+                        Button("\(Int(stop * 100))%") { appState.setZoom(stop) }
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .frame(minWidth: 62)
+                .help("Zoom level")
+
+                Button {
+                    appState.zoomIn()
+                } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!appState.canZoomIn)
+                .help("Zoom in (⌘+)")
+            }
+            Divider().frame(height: 16)
+        }
     }
 
     @ViewBuilder
@@ -83,7 +200,8 @@ struct SignWorkspaceView: View {
 
                 Text("Page \(appState.currentPageIndex + 1) of \(pdf.pageCount)")
                     .font(.subheadline.monospacedDigit())
-                    .frame(minWidth: 120)
+                    .fixedSize()
+                    .frame(minWidth: 92)
 
                 Button {
                     appState.currentPageIndex = min(pdf.pageCount - 1, appState.currentPageIndex + 1)

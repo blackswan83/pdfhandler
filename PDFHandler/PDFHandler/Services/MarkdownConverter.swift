@@ -24,7 +24,9 @@ enum ConvertImageFormat: String, CaseIterable, Identifiable, Codable {
 
 struct MarkdownConversionOptions {
     var includeYAMLFrontmatter: Bool = true
-    var extractImages: Bool = true
+    /// Renders every page as a full-page image next to the Markdown.
+    /// Off by default: it multiplies output size on large documents.
+    var extractImages: Bool = false
     var imageFormat: ConvertImageFormat = .png
     var performOCR: Bool = true
     var ocrLanguages: [String] = ["en-US"]
@@ -72,7 +74,13 @@ actor MarkdownConverter {
 
         let baseName = pdfURL.deletingPathExtension().lastPathComponent
         let folder = pdfURL.deletingLastPathComponent()
-        let markdownURL = folder.appendingPathComponent("\(baseName).md")
+        // Never overwrite an existing .md (it may carry hand edits).
+        var markdownURL = folder.appendingPathComponent("\(baseName).md")
+        var counter = 2
+        while FileManager.default.fileExists(atPath: markdownURL.path) {
+            markdownURL = folder.appendingPathComponent("\(baseName)-\(counter).md")
+            counter += 1
+        }
 
         var imagesDirURL: URL?
         if options.extractImages {
@@ -163,8 +171,13 @@ actor MarkdownConverter {
         guard let image = try PDFPageRenderer.render(page: page, dpi: 300) else { return "" }
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return "" }
 
+        // Vision can invoke the request's completion handler with an
+        // error AND then throw from perform(_:) for the same failure;
+        // resuming a CheckedContinuation twice crashes, so gate it.
+        let gate = OneShot()
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
             let request = VNRecognizeTextRequest { request, error in
+                guard gate.claim() else { return }
                 if let error = error {
                     continuation.resume(throwing: error)
                     return
@@ -185,7 +198,9 @@ actor MarkdownConverter {
             do {
                 try handler.perform([request])
             } catch {
-                continuation.resume(throwing: error)
+                if gate.claim() {
+                    continuation.resume(throwing: error)
+                }
             }
         }
     }
@@ -243,7 +258,14 @@ actor MarkdownConverter {
     }
 
     private func yaml(_ value: String) -> String {
-        let escaped = value.replacingOccurrences(of: "\"", with: "\\\"")
+        // Backslashes must be escaped before quotes, and embedded
+        // newlines would split the scalar and break the frontmatter.
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
         return "\"\(escaped)\""
     }
 
@@ -256,5 +278,20 @@ actor MarkdownConverter {
             }
         }
         return out
+    }
+}
+
+/// Thread-safe one-shot flag guarding a CheckedContinuation against
+/// being resumed from more than one callback path.
+private final class OneShot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var used = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if used { return false }
+        used = true
+        return true
     }
 }

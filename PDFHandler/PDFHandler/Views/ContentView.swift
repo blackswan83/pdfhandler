@@ -23,6 +23,14 @@ struct ContentView: View {
             NewSignatureView()
                 .environmentObject(appState)
         }
+        .onAppear {
+            // Development scaffolding for CI screenshot capture; a
+            // no-op unless --screenshot-demo was passed at launch.
+            if ScreenshotDemo.isEnabled, appState.document == nil {
+                appState.loadScreenshotDemo()
+                if let mode = ScreenshotDemo.initialMode { appState.mode = mode }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .requestOpenPanel)) { _ in
             openPDFInCurrentMode()
         }
@@ -34,6 +42,18 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestRedo)) { _ in
             appState.undoCoordinator.redo()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .requestZoomIn)) { _ in
+            if appState.mode == .sign { appState.zoomIn() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .requestZoomOut)) { _ in
+            if appState.mode == .sign { appState.zoomOut() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .requestZoomActual)) { _ in
+            if appState.mode == .sign { appState.zoomToActualSize() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .requestZoomFit)) { _ in
+            if appState.mode == .sign { appState.zoomToFit() }
         }
     }
 
@@ -77,7 +97,7 @@ struct ContentView: View {
             pickPDF { url in appState.compressSourceURL = url }
         case .merge:
             pickPDFs(multi: true) { urls in
-                appState.mergeSourceURLs.append(contentsOf: urls)
+                appState.mergeItems.append(contentsOf: urls.map { MergeItem(url: $0) })
             }
         case .convert:
             pickPDF { url in appState.convertSourceURL = url }

@@ -9,6 +9,14 @@
 import Foundation
 import PDFKit
 
+/// A queued merge input. Wrapping the URL gives every list row a
+/// stable identity (the same file can be queued twice, and offsets
+/// change on every reorder — neither works as a ForEach id).
+struct MergeItem: Identifiable, Equatable {
+    let id = UUID()
+    let url: URL
+}
+
 enum PDFMergeError: LocalizedError {
     case insufficientFiles
     case cannotOpen(URL)
@@ -50,10 +58,17 @@ actor PDFMerger {
             progressHandler(Double(index + 1) / Double(pdfURLs.count) * 0.95)
         }
 
-        let first = pdfURLs[0]
-        let outputURL = first
-            .deletingLastPathComponent()
-            .appendingPathComponent("\(outputName).pdf")
+        // Never overwrite an existing file — in particular not one of
+        // the inputs (merging "merged.pdf + C.pdf" with the default
+        // output name used to clobber the first input mid-read).
+        let dir = pdfURLs[0].deletingLastPathComponent()
+        var outputURL = dir.appendingPathComponent("\(outputName).pdf")
+        var counter = 2
+        while FileManager.default.fileExists(atPath: outputURL.path)
+            || pdfURLs.contains(where: { $0.standardizedFileURL == outputURL.standardizedFileURL }) {
+            outputURL = dir.appendingPathComponent("\(outputName)-\(counter).pdf")
+            counter += 1
+        }
 
         guard merged.write(to: outputURL) else {
             throw PDFMergeError.cannotWrite(outputURL)

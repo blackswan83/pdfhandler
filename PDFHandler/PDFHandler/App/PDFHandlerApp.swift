@@ -8,6 +8,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 @main
 struct PDFHandlerApp: App {
@@ -33,13 +34,44 @@ struct PDFHandlerApp: App {
                 }
                 .keyboardShortcut("s", modifiers: .command)
             }
+            CommandGroup(after: .toolbar) {
+                Button("Zoom In") {
+                    NotificationCenter.default.post(name: .requestZoomIn, object: nil)
+                }
+                .keyboardShortcut("+", modifiers: .command)
+                Button("Zoom Out") {
+                    NotificationCenter.default.post(name: .requestZoomOut, object: nil)
+                }
+                .keyboardShortcut("-", modifiers: .command)
+                Button("Actual Size") {
+                    NotificationCenter.default.post(name: .requestZoomActual, object: nil)
+                }
+                .keyboardShortcut("0", modifiers: .command)
+                Button("Zoom to Fit") {
+                    NotificationCenter.default.post(name: .requestZoomFit, object: nil)
+                }
+                .keyboardShortcut("9", modifiers: .command)
+                Divider()
+            }
             CommandGroup(replacing: .undoRedo) {
+                // While a text field is being edited, ⌘Z belongs to the
+                // field editor; otherwise it drives placement undo.
                 Button("Undo") {
-                    NotificationCenter.default.post(name: .requestUndo, object: nil)
+                    if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+                       let undoManager = textView.undoManager, undoManager.canUndo {
+                        undoManager.undo()
+                    } else {
+                        NotificationCenter.default.post(name: .requestUndo, object: nil)
+                    }
                 }
                 .keyboardShortcut("z", modifiers: .command)
                 Button("Redo") {
-                    NotificationCenter.default.post(name: .requestRedo, object: nil)
+                    if let textView = NSApp.keyWindow?.firstResponder as? NSTextView,
+                       let undoManager = textView.undoManager, undoManager.canRedo {
+                        undoManager.redo()
+                    } else {
+                        NotificationCenter.default.post(name: .requestRedo, object: nil)
+                    }
                 }
                 .keyboardShortcut("z", modifiers: [.command, .shift])
             }
@@ -52,4 +84,8 @@ extension Notification.Name {
     static let requestSaveSigned = Notification.Name("pdfhandler.requestSaveSigned")
     static let requestUndo       = Notification.Name("pdfhandler.requestUndo")
     static let requestRedo       = Notification.Name("pdfhandler.requestRedo")
+    static let requestZoomIn     = Notification.Name("pdfhandler.requestZoomIn")
+    static let requestZoomOut    = Notification.Name("pdfhandler.requestZoomOut")
+    static let requestZoomActual = Notification.Name("pdfhandler.requestZoomActual")
+    static let requestZoomFit    = Notification.Name("pdfhandler.requestZoomFit")
 }
