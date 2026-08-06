@@ -25,6 +25,10 @@
 //       morphological erosion, which would eat thin strokes.
 //    4. Crop to the ink so the saved asset has no dead margins.
 //
+//  The API is split into raster-in / raster-out around a pure core so
+//  the expensive part can run off the main thread: NSImage is not
+//  Sendable and cannot cross an actor boundary, but a Raster is.
+//
 
 import Foundation
 import AppKit
@@ -32,78 +36,132 @@ import CoreGraphics
 
 enum SignatureExtractor {
 
-    struct Options {
+    struct Options: Sendable {
         /// 0…1. Higher captures fainter ink at the cost of admitting
         /// more paper texture.
         var sensitivity: Double = 0.5
-        /// Ink is re-coloured rather than sampled: pen on paper
-        /// photographs as muddy grey-blue, which looks wrong over
-        /// black document text.
-        var inkColor: NSColor = .black
         /// Working resolution cap. A signature is placed at a couple
         /// of hundred points; beyond this is cost without benefit.
-        var maxDimension: CGFloat = 1800
+        var maxDimension: Int = 1800
     }
 
-    /// Returns the isolated signature, or nil if the image could not
-    /// be read or contains no discernible ink.
-    static func extract(from image: NSImage, options: Options = Options()) -> NSImage? {
-        guard let cg = downscaledCGImage(image, maxDimension: options.maxDimension) else { return nil }
-        let width = cg.width, height = cg.height
-        guard width > 8, height > 8 else { return nil }
+    /// RGBA8 pixels that can cross actor boundaries — unlike NSImage.
+    struct Raster: Sendable {
+        var bytes: [UInt8]
+        var width: Int
+        var height: Int
+    }
 
-        guard let rgba = rgbaBytes(from: cg, width: width, height: height) else { return nil }
+    // MARK: - Convenience
+
+    /// Whole pipeline in one call, for callers not worried about
+    /// blocking. The UI uses the three-step form so the middle step
+    /// can run off the main thread.
+    static func extract(from image: NSImage, options: Options = Options()) -> NSImage? {
+        guard let input = raster(from: image, maxDimension: options.maxDimension),
+              let output = extract(input, options: options)
+        else { return nil }
+        return self.image(from: output)
+    }
+
+    // MARK: - Step 1: NSImage → Raster (main thread)
+
+    static func raster(from image: NSImage, maxDimension: Int) -> Raster? {
+        guard let cg = downscaled(image, maxDimension: CGFloat(maxDimension)) else { return nil }
+        let width = cg.width, height = cg.height
+        guard width > 8, height > 8,
+              let space = CGColorSpace(name: CGColorSpace.sRGB)
+        else { return nil }
+
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let ok: Bool = bytes.withUnsafeMutableBytes { buffer in
+            guard let base = buffer.baseAddress,
+                  let ctx = CGContext(
+                    data: base, width: width, height: height, bitsPerComponent: 8,
+                    bytesPerRow: width * 4, space: space,
+                    bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+                  )
+            else { return false }
+            // White backdrop so a transparent input reads as paper.
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        return ok ? Raster(bytes: bytes, width: width, height: height) : nil
+    }
+
+    // MARK: - Step 2: the pure core (safe off the main thread)
+
+    /// Returns premultiplied RGBA with black ink, cropped to the
+    /// strokes, or nil when no ink is discernible.
+    static func extract(_ input: Raster, options: Options) -> Raster? {
+        let width = input.width, height = input.height
+        let count = width * height
+        guard count > 64 else { return nil }
 
         // 1. Luminance.
-        var luma = [Float](repeating: 0, count: width * height)
-        for i in 0..<(width * height) {
-            let r = Float(rgba[i * 4]), g = Float(rgba[i * 4 + 1]), b = Float(rgba[i * 4 + 2])
+        var luma = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            let r = Float(input.bytes[i * 4])
+            let g = Float(input.bytes[i * 4 + 1])
+            let b = Float(input.bytes[i * 4 + 2])
             luma[i] = 0.299 * r + 0.587 * g + 0.114 * b
         }
 
-        // 2. Local paper level per tile (high percentile = the paper,
-        //    not the ink), bilinearly interpolated back to pixels.
+        // 2. Local paper level, and a global ink level from the
+        //    darkest few percent.
         let paper = paperLevelField(luma: luma, width: width, height: height)
-
-        // Global ink level: the darkest few percent of the image.
         let inkLevel = percentile(luma, 0.03)
 
-        // 3. Continuous alpha matte.
-        //    Higher sensitivity lowers the floor, admitting fainter ink.
+        // 3. Continuous alpha matte. Higher sensitivity lowers the
+        //    floor, admitting fainter ink.
         let floor = Float(0.06 + (1.0 - min(max(options.sensitivity, 0), 1)) * 0.22)
-        var alpha = [Float](repeating: 0, count: width * height)
-        for i in 0..<(width * height) {
+        var alpha = [Float](repeating: 0, count: count)
+        for i in 0..<count {
             let bg = paper[i]
-            let span = max(bg - inkLevel, 12)          // guard flat images
-            let raw = (bg - luma[i]) / span             // 0 at paper, 1 at ink
-            let lifted = (raw - floor) / max(1 - floor, 0.01)
-            alpha[i] = min(max(lifted, 0), 1)
+            let span = max(bg - inkLevel, 12)      // guard flat images
+            let raw = (bg - luma[i]) / span         // 0 at paper, 1 at ink
+            alpha[i] = min(max((raw - floor) / max(1 - floor, 0.01), 0), 1)
         }
 
         // 4. Remove specks: paper grain, dust, compression noise.
         removeSmallComponents(&alpha, width: width, height: height)
 
-        // 5. Crop to the ink.
+        // 5. Crop to the ink and composite.
         guard let box = inkBounds(alpha, width: width, height: height) else { return nil }
+        return composite(alpha: alpha, width: width, crop: box)
+    }
 
-        return composite(
-            alpha: alpha, width: width, height: height,
-            crop: box, inkColor: options.inkColor
-        )
+    // MARK: - Step 3: Raster → NSImage (main thread)
+
+    static func image(from raster: Raster) -> NSImage? {
+        guard raster.width > 0, raster.height > 0,
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let provider = CGDataProvider(data: Data(raster.bytes) as CFData),
+              let cg = CGImage(
+                width: raster.width, height: raster.height,
+                bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: raster.width * 4, space: space,
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider, decode: nil,
+                shouldInterpolate: true, intent: .defaultIntent
+              )
+        else { return nil }
+        return NSImage(cgImage: cg, size: NSSize(width: raster.width, height: raster.height))
     }
 
     // MARK: - Paper level
 
     /// Per-pixel estimate of the paper's brightness, from a coarse grid
     /// of local high percentiles interpolated bilinearly. Coarse on
-    /// purpose: it must model lighting, not the strokes.
+    /// purpose: it must model the lighting, not the strokes.
     private static func paperLevelField(luma: [Float], width: Int, height: Int) -> [Float] {
-        let tiles = 10
-        let tileW = max(1, width / tiles), tileH = max(1, height / tiles)
+        let tileW = max(1, width / 10), tileH = max(1, height / 10)
         let cols = max(1, Int(ceil(Double(width) / Double(tileW))))
         let rows = max(1, Int(ceil(Double(height) / Double(tileH))))
 
-        var grid = [Float](repeating: 0, count: cols * rows)
+        var grid = [Float](repeating: 255, count: cols * rows)
         var scratch: [Float] = []
         scratch.reserveCapacity(tileW * tileH)
 
@@ -112,12 +170,13 @@ enum SignatureExtractor {
                 scratch.removeAll(keepingCapacity: true)
                 let x0 = col * tileW, x1 = min(width, x0 + tileW)
                 let y0 = row * tileH, y1 = min(height, y0 + tileH)
+                guard x0 < x1, y0 < y1 else { continue }
                 for y in y0..<y1 {
                     let base = y * width
                     for x in x0..<x1 { scratch.append(luma[base + x]) }
                 }
                 // 80th percentile: above most ink, below specular glare.
-                grid[row * cols + col] = scratch.isEmpty ? 255 : percentile(scratch, 0.80)
+                grid[row * cols + col] = percentile(scratch, 0.80)
             }
         }
 
@@ -147,20 +206,24 @@ enum SignatureExtractor {
 
     // MARK: - Despeckle
 
-    /// Zeroes connected regions smaller than a size floor. Uses
-    /// component labelling rather than an erode/dilate opening: a
-    /// 3x3 erosion deletes any stroke thinner than three pixels,
-    /// which is most of a fine-pen signature at this resolution.
+    /// Zeroes connected regions smaller than a size floor. Component
+    /// labelling rather than an erode/dilate opening: a 3x3 erosion
+    /// deletes any stroke thinner than three pixels, which is most of
+    /// a fine-pen signature at this resolution.
     private static func removeSmallComponents(_ alpha: inout [Float], width: Int, height: Int) {
         let count = width * height
-        let present: (Int) -> Bool = { alpha[$0] > 0.18 }
+        let threshold: Float = 0.18
         let minimumSize = max(10, count / 8000)
 
         var visited = [Bool](repeating: false, count: count)
         var stack: [Int] = []
         var component: [Int] = []
 
-        for start in 0..<count where !visited[start] && present(start) {
+        for start in 0..<count {
+            // Inlined rather than a closure: capturing `alpha` in one
+            // would escape an inout parameter, which Swift rejects.
+            guard !visited[start], alpha[start] > threshold else { continue }
+
             stack.removeAll(keepingCapacity: true)
             component.removeAll(keepingCapacity: true)
             stack.append(start)
@@ -171,11 +234,13 @@ enum SignatureExtractor {
                 let x = idx % width, y = idx / width
                 // 8-connected: diagonal continuity matters for strokes.
                 for dy in -1...1 {
+                    let ny = y + dy
+                    guard ny >= 0, ny < height else { continue }
                     for dx in -1...1 where !(dx == 0 && dy == 0) {
-                        let nx = x + dx, ny = y + dy
-                        guard nx >= 0, nx < width, ny >= 0, ny < height else { continue }
+                        let nx = x + dx
+                        guard nx >= 0, nx < width else { continue }
                         let n = ny * width + nx
-                        if !visited[n] && present(n) {
+                        if !visited[n], alpha[n] > threshold {
                             visited[n] = true
                             stack.append(n)
                         }
@@ -210,48 +275,31 @@ enum SignatureExtractor {
         return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
     }
 
-    private static func composite(
-        alpha: [Float], width: Int, height: Int, crop: CGRect, inkColor: NSColor
-    ) -> NSImage? {
+    /// Black ink, premultiplied so anti-aliased edges blend without
+    /// halos. Ink is re-coloured rather than sampled: pen on paper
+    /// photographs as muddy grey-blue, which looks wrong beside the
+    /// document's own black text.
+    private static func composite(alpha: [Float], width: Int, crop: CGRect) -> Raster? {
         let cw = Int(crop.width), ch = Int(crop.height)
         guard cw > 0, ch > 0 else { return nil }
-
-        let rgb = inkColor.usingColorSpace(.sRGB) ?? .black
-        let ir = Float(rgb.redComponent * 255)
-        let ig = Float(rgb.greenComponent * 255)
-        let ib = Float(rgb.blueComponent * 255)
 
         var out = [UInt8](repeating: 0, count: cw * ch * 4)
         for y in 0..<ch {
             let srcRow = (Int(crop.minY) + y) * width + Int(crop.minX)
             let dstRow = y * cw * 4
             for x in 0..<cw {
-                let a = alpha[srcRow + x]
+                let a = min(max(alpha[srcRow + x], 0), 1)
                 let o = dstRow + x * 4
-                // Premultiplied: anti-aliased edges blend without halos.
-                out[o]     = UInt8(min(255, max(0, ir * a)))
-                out[o + 1] = UInt8(min(255, max(0, ig * a)))
-                out[o + 2] = UInt8(min(255, max(0, ib * a)))
-                out[o + 3] = UInt8(min(255, max(0, a * 255)))
+                // RGB stays 0 (black) premultiplied; only alpha varies.
+                out[o + 3] = UInt8(a * 255)
             }
         }
-
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
-              let provider = CGDataProvider(data: Data(out) as CFData),
-              let cgImage = CGImage(
-                width: cw, height: ch, bitsPerComponent: 8, bitsPerPixel: 32,
-                bytesPerRow: cw * 4, space: space,
-                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-                provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent
-              )
-        else { return nil }
-
-        return NSImage(cgImage: cgImage, size: NSSize(width: cw, height: ch))
+        return Raster(bytes: out, width: cw, height: ch)
     }
 
     // MARK: - Input plumbing
 
-    private static func downscaledCGImage(_ image: NSImage, maxDimension: CGFloat) -> CGImage? {
+    private static func downscaled(_ image: NSImage, maxDimension: CGFloat) -> CGImage? {
         guard let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         let w = CGFloat(source.width), h = CGFloat(source.height)
         let longest = max(w, h)
@@ -269,25 +317,5 @@ enum SignatureExtractor {
         ctx.interpolationQuality = .high
         ctx.draw(source, in: CGRect(x: 0, y: 0, width: tw, height: th))
         return ctx.makeImage() ?? source
-    }
-
-    private static func rgbaBytes(from cg: CGImage, width: Int, height: Int) -> [UInt8]? {
-        guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        let ok: Bool = bytes.withUnsafeMutableBytes { buffer -> Bool in
-            guard let base = buffer.baseAddress,
-                  let ctx = CGContext(
-                    data: base, width: width, height: height, bitsPerComponent: 8,
-                    bytesPerRow: width * 4, space: space,
-                    bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-                  )
-            else { return false }
-            // White backdrop so a transparent input reads as paper.
-            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-            ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
-        }
-        return ok ? bytes : nil
     }
 }

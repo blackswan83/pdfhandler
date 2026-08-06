@@ -235,24 +235,27 @@ struct NewSignatureView: View {
             statusMessage = "Using the image as-is."
             return
         }
-        let sensitivity = inkSensitivity
+        let options = SignatureExtractor.Options(sensitivity: inkSensitivity)
+        // NSImage cannot cross an actor boundary, so the conversion
+        // happens here and only the Sendable raster is handed off.
+        guard let input = SignatureExtractor.raster(from: original, maxDimension: options.maxDimension) else {
+            candidateImage = original
+            statusMessage = "Could not read that image."
+            return
+        }
+
         statusMessage = "Isolating ink…"
         extractionTask = Task {
-            let extracted = await Task.detached(priority: .userInitiated) {
-                SignatureExtractor.extract(
-                    from: original,
-                    options: SignatureExtractor.Options(sensitivity: sensitivity)
-                )
+            let output = await Task.detached(priority: .userInitiated) {
+                SignatureExtractor.extract(input, options: options)
             }.value
             if Task.isCancelled { return }
-            await MainActor.run {
-                if let extracted {
-                    candidateImage = extracted
-                    statusMessage = "Ink isolated onto a transparent background."
-                } else {
-                    candidateImage = original
-                    statusMessage = "No clear ink found — using the image as-is."
-                }
+            if let output, let extracted = SignatureExtractor.image(from: output) {
+                candidateImage = extracted
+                statusMessage = "Ink isolated onto a transparent background."
+            } else {
+                candidateImage = original
+                statusMessage = "No clear ink found — using the image as-is."
             }
         }
     }
