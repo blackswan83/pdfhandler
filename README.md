@@ -31,10 +31,16 @@ Easiest route — mounts the DMG, installs, clears the flag, launches:
 Or by hand: drag **PDFHandler.app** into **Applications**, then
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/PDFHandler.app
+find /Applications/PDFHandler.app -print0 | xargs -0 xattr -c
 ```
 
-The `-r` matters — the flag lands on nested files inside the bundle, and clearing only the top level can leave it blocked. "No such xattr" means it was already clean.
+Recursion is required — the flag lands on nested files inside the bundle, and clearing only the top level can leave it blocked. Note this deliberately does **not** use `xattr -dr`: recent macOS ships a C `xattr` that dropped `-r` and answers `option -r not recognized`, so `find` does the recursion. Add `sudo` to both commands if you hit permission errors.
+
+If macOS still calls it damaged after that, the ad-hoc signature itself may have been invalidated in transit. Re-seal it locally:
+
+```bash
+codesign --force --deep --sign - /Applications/PDFHandler.app
+```
 
 If macOS still refuses (Sequoia removed the old Control-click → Open bypass), approve it once in **System Settings → Privacy & Security → Open Anyway**.
 

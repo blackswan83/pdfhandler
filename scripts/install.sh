@@ -90,17 +90,30 @@ echo "==> Installing to $DEST"
 rm -rf "$DEST"
 cp -R "$APP_SOURCE" "$DEST"
 
-# The whole point of the script. -r because the flag lands on nested
-# files too, and clearing only the bundle root leaves it blocked.
-# A missing attribute is success, not failure.
+# The whole point of the script.
+#
+# NOT `xattr -dr`: recent macOS replaced the old Python xattr, which
+# supported -r, with a C build that does not ("option -r not
+# recognized"). `find` does the recursion instead, and -c (clear all)
+# avoids the "No such xattr" noise -d emits for files without it.
+# Recursion is required: the flag lands on nested files too, so
+# clearing only the bundle root can leave the app blocked.
 echo "==> Clearing the quarantine flag"
-xattr -dr com.apple.quarantine "$DEST" 2>/dev/null || true
+find "$DEST" -print0 | xargs -0 xattr -c 2>/dev/null || true
 
-remaining="$(xattr -lr "$DEST" 2>/dev/null | grep -c 'com.apple.quarantine' || true)"
-if [[ "${remaining:-0}" -gt 0 ]]; then
-    echo "   warning: $remaining quarantine attributes still present" >&2
+if xattr -p com.apple.quarantine "$DEST" >/dev/null 2>&1; then
+    echo "   warning: the bundle root is still quarantined; try again with sudo" >&2
 else
     echo "   clean"
+fi
+
+# "App is damaged" is just as often a broken signature as it is
+# quarantine: moving an ad-hoc signed bundle around can invalidate the
+# seal. Re-sign locally, but only when verification actually fails.
+if ! codesign --verify --deep --strict "$DEST" >/dev/null 2>&1; then
+    echo "==> Signature does not verify; re-signing ad-hoc locally"
+    codesign --force --deep --sign - "$DEST" >/dev/null 2>&1 \
+        || echo "   warning: re-signing failed" >&2
 fi
 
 echo "==> Launching"
