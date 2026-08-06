@@ -209,7 +209,10 @@ extension AppState {
 
         if ScreenshotDemo.selection == "freetext" {
             // Text field selected: brings up the typography inspector.
-            selectedPlacementID = placed.first { $0.content.textPayload != nil }?.id
+            selectedPlacementID = placed.first {
+                if case .freeText = $0.content { return true }
+                return false
+            }?.id
             activeTool = .freeText
         } else {
             // Signature selected: shows the selection chrome — border,

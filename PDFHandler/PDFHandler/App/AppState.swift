@@ -211,6 +211,19 @@ final class AppState: ObservableObject {
         selectedTextPlacement?.content.textPayload?.style ?? defaultTextStyle
     }
 
+    /// The point size the selected text field is actually rendering
+    /// at. With "fit to box" on this is derived from the box, so the
+    /// inspector would otherwise display a stored default that is not
+    /// the size in effect.
+    var effectiveTextPointSize: CGFloat? {
+        guard let placement = selectedTextPlacement,
+              let style = placement.content.textPayload?.style,
+              let page = document?.page(at: placement.pageIndex)
+        else { return nil }
+        let boxHeightInPoints = placement.normalizedRect.height * page.displaySize.height
+        return style.resolvedSize(boxHeight: boxHeightInPoints)
+    }
+
     var selectedTextPlacement: Placement? {
         guard let id = selectedPlacementID,
               let placement = placements.first(where: { $0.id == id }),

@@ -28,6 +28,15 @@ struct TextInspectorView: View {
         )
     }
 
+    /// While fitting to the box, report the size actually in effect
+    /// rather than the stored manual value, which is not being used.
+    private var sizeLabel: String {
+        if style.autoFit, let effective = appState.effectiveTextPointSize {
+            return "\(Int(effective.rounded())) pt"
+        }
+        return "\(Int(style.size)) pt"
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "textformat")
@@ -55,15 +64,15 @@ struct TextInspectorView: View {
                     in: TextStyle.minSize...TextStyle.maxSize,
                     step: 1
                 ) {
-                    Text("\(Int(style.size)) pt")
+                    Text(sizeLabel)
                         .font(.system(.body, design: .monospaced))
-                        .frame(minWidth: 44, alignment: .leading)
+                        .frame(minWidth: 52, alignment: .leading)
                 }
             }
             .disabled(style.autoFit)
             .foregroundStyle(style.autoFit ? .tertiary : .primary)
             .help(style.autoFit
-                  ? "Turn off \"Fit to box\" to set an exact size"
+                  ? "Fitting to the box. Turn it off to set an exact size."
                   : "Point size in the PDF, independent of zoom")
 
             Spacer()
