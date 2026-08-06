@@ -18,13 +18,42 @@ Grab `PDFHandler-<version>.dmg` from either:
 - **GitHub Releases** (attached automatically when a `v*` tag is pushed)
 - **Actions → Build DMG → latest successful run → Artifacts** (built on every push)
 
-Drag **PDFHandler.app** into **Applications**. Gatekeeper will block the first launch because the build is ad-hoc signed (no Apple Developer ID). Clear the flag once:
+### Installing past Gatekeeper
+
+The build is **ad-hoc signed** (no Apple Developer ID) and not notarized. Anything downloaded through a browser also carries a `com.apple.quarantine` flag, and quarantine plus an unidentified developer is what makes macOS claim the app is "damaged" or malware. Nothing is wrong with it — macOS simply has no signature to check it against.
+
+Easiest route — mounts the DMG, installs, clears the flag, launches:
 
 ```bash
-xattr -d com.apple.quarantine /Applications/PDFHandler.app
+./scripts/install.sh ~/Downloads/PDFHandler-2.0.dmg
 ```
 
-Then double-click to launch.
+Or by hand: drag **PDFHandler.app** into **Applications**, then
+
+```bash
+find /Applications/PDFHandler.app -print0 | xargs -0 xattr -c
+```
+
+Recursion is required — the flag lands on nested files inside the bundle, and clearing only the top level can leave it blocked. Note this deliberately does **not** use `xattr -dr`: recent macOS ships a C `xattr` that dropped `-r` and answers `option -r not recognized`, so `find` does the recursion. Add `sudo` to both commands if you hit permission errors.
+
+If macOS still calls it damaged after that, the ad-hoc signature itself may have been invalidated in transit. Re-seal it locally:
+
+```bash
+codesign --force --deep --sign - /Applications/PDFHandler.app
+```
+
+If macOS still refuses (Sequoia removed the old Control-click → Open bypass), approve it once in **System Settings → Privacy & Security → Open Anyway**.
+
+**Permanent options, in ascending order of effort:**
+
+- **Build locally.** Locally-built apps are never quarantined, so `./scripts/build-dmg.sh` followed by `./scripts/install.sh` sidesteps the whole thing.
+- **Per-app Gatekeeper exception**, leaving Gatekeeper on for everything else:
+  ```bash
+  sudo spctl --add --label "PDF Handler" /Applications/PDFHandler.app
+  ```
+- **Apple Developer ID + notarization** (99 USD/year). The only route that makes the app open cleanly for anyone else, with no commands at all.
+
+Disabling Gatekeeper globally (`spctl --master-disable`) also works, but it lowers the bar for *every* app on the machine — not worth it for one tool.
 
 ## Using it
 
