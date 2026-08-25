@@ -5,6 +5,12 @@
 //  Root layout. NavigationSplitView with a mode-switcher sidebar on
 //  the left and the per-mode workspace on the right.
 //
+//  The menu/notification plumbing lives in ViewModifiers below rather
+//  than chained onto `body`. A dozen modifiers on one expression blew
+//  past the SwiftUI type-checker's budget ("unable to type-check this
+//  expression in reasonable time"); each modifier now type-checks on
+//  its own.
+//
 
 import SwiftUI
 import AppKit
@@ -23,6 +29,14 @@ struct ContentView: View {
             NewSignatureView()
                 .environmentObject(appState)
         }
+        // Whole-window drop target: dropping a PDF anywhere opens it.
+        // Previously only the preview accepted drops, so dropping on
+        // the sidebar, the toolbar, or an empty pane did nothing.
+        .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
+            PDFDrop.receive(providers, onLoaded: openURLs)
+        }
+        .modifier(FileCommandRouting(openURLs: openURLs, openPanel: openPDFInCurrentMode))
+        .modifier(ZoomCommandRouting())
         .onAppear {
             // Development scaffolding for CI screenshot capture; a
             // no-op unless --screenshot-demo was passed at launch.
@@ -30,30 +44,6 @@ struct ContentView: View {
                 appState.loadScreenshotDemo()
                 if let mode = ScreenshotDemo.initialMode { appState.mode = mode }
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestOpenPanel)) { _ in
-            openPDFInCurrentMode()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestSaveSigned)) { _ in
-            if appState.mode == .sign { appState.saveSignedPDF() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestUndo)) { _ in
-            appState.undoCoordinator.undo()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestRedo)) { _ in
-            appState.undoCoordinator.redo()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestZoomIn)) { _ in
-            if appState.mode == .sign { appState.zoomIn() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestZoomOut)) { _ in
-            if appState.mode == .sign { appState.zoomOut() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestZoomActual)) { _ in
-            if appState.mode == .sign { appState.zoomToActualSize() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .requestZoomFit)) { _ in
-            if appState.mode == .sign { appState.zoomToFit() }
         }
     }
 
@@ -87,36 +77,78 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Keyboard command routing
+    // MARK: - Opening files
 
-    private func openPDFInCurrentMode() {
+    /// Routes incoming PDFs — dropped, or opened from Finder / the
+    /// Dock — to whichever mode makes sense. Merge accumulates a
+    /// queue; everything else takes the first file.
+    private func openURLs(_ urls: [URL]) {
+        guard let first = urls.first else { return }
         switch appState.mode {
-        case .sign:
-            pickPDF { url in appState.openDocument(at: url) }
-        case .compress:
-            pickPDF { url in appState.compressSourceURL = url }
         case .merge:
-            pickPDFs(multi: true) { urls in
-                appState.mergeItems.append(contentsOf: urls.map { MergeItem(url: $0) })
-            }
+            appState.mergeItems.append(contentsOf: urls.map { MergeItem(url: $0) })
+        case .compress:
+            appState.compressSourceURL = first
         case .convert:
-            pickPDF { url in appState.convertSourceURL = url }
+            appState.convertSourceURL = first
+        case .sign:
+            appState.openDocument(at: first)
         }
     }
 
-    private func pickPDF(_ onPick: (URL) -> Void) {
+    private func openPDFInCurrentMode() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.pdf]
-        panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        if panel.runModal() == .OK, let url = panel.url { onPick(url) }
+        panel.allowsMultipleSelection = (appState.mode == .merge)
+        guard panel.runModal() == .OK else { return }
+        openURLs(panel.urls)
     }
+}
 
-    private func pickPDFs(multi: Bool, _ onPick: ([URL]) -> Void) {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.pdf]
-        panel.allowsMultipleSelection = multi
-        panel.canChooseDirectories = false
-        if panel.runModal() == .OK { onPick(panel.urls) }
+// MARK: - Command routing
+
+private struct FileCommandRouting: ViewModifier {
+    @EnvironmentObject var appState: AppState
+    let openURLs: ([URL]) -> Void
+    let openPanel: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .requestOpenPanel)) { _ in
+                openPanel()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openDocumentURLs)) { note in
+                if let urls = note.object as? [URL] { openURLs(urls) }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .requestSaveSigned)) { _ in
+                if appState.mode == .sign { appState.saveSignedPDF() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .requestUndo)) { _ in
+                appState.undoCoordinator.undo()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .requestRedo)) { _ in
+                appState.undoCoordinator.redo()
+            }
+    }
+}
+
+private struct ZoomCommandRouting: ViewModifier {
+    @EnvironmentObject var appState: AppState
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .requestZoomIn)) { _ in
+                if appState.mode == .sign { appState.zoomIn() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .requestZoomOut)) { _ in
+                if appState.mode == .sign { appState.zoomOut() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .requestZoomActual)) { _ in
+                if appState.mode == .sign { appState.zoomToActualSize() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .requestZoomFit)) { _ in
+                if appState.mode == .sign { appState.zoomToFit() }
+            }
     }
 }

@@ -25,6 +25,10 @@ import AppKit
 struct PlacementView: View {
     let placement: Placement
     let pageSize: CGSize
+    /// Screen points per page point. A manual font size is expressed
+    /// in page points so it survives zoom and window resizing; the
+    /// preview multiplies by this, the flattener uses it raw.
+    let pageScale: CGFloat
     @EnvironmentObject var appState: AppState
 
     @State private var dragStart: CGRect?
@@ -96,7 +100,7 @@ struct PlacementView: View {
             .onAppear {
                 // A freshly dropped, still-empty text box goes straight
                 // into editing so the user can just start typing.
-                if case .freeText(let text) = placement.content, text.isEmpty, isSelected {
+                if case .freeText(let text, _) = placement.content, text.isEmpty, isSelected {
                     appState.editingPlacementID = placement.id
                 }
             }
@@ -117,14 +121,12 @@ struct PlacementView: View {
                 Color.gray.opacity(0.2)
             }
 
-        case .date(let text):
-            textContent(text, rect: rect) {
-                appState.updateContentLive(id: placement.id, content: .date(text: $0))
-            }
-
-        case .freeText(let text):
-            textContent(text, rect: rect) {
-                appState.updateContentLive(id: placement.id, content: .freeText(text: $0))
+        case .date(let text, let style), .freeText(let text, let style):
+            textContent(text, style: style, rect: rect) { newText in
+                appState.updateContentLive(
+                    id: placement.id,
+                    content: placement.content.withText(newText)
+                )
             }
 
         case .checkbox(let isChecked):
@@ -137,11 +139,19 @@ struct PlacementView: View {
     @ViewBuilder
     private func textContent(
         _ text: String,
+        style: TextStyle,
         rect: CGRect,
         onEdit: @escaping (String) -> Void
     ) -> some View {
-        let fontSize = max(8, rect.height * PDFFlattener.Style.textFontFactor)
+        // Auto-fit derives from the on-screen box, so it needs no
+        // conversion. A manual size is in page points and must be
+        // scaled up to screen points to stay WYSIWYG.
+        let fontSize = style.autoFit
+            ? style.resolvedSize(boxHeight: rect.height)
+            : style.size * pageScale
         let inset = rect.height * PDFFlattener.Style.textInsetFactor
+        let font: Font = style.font.postScriptName
+            .map { Font.custom($0, fixedSize: fontSize) } ?? .system(size: fontSize)
 
         if isEditing {
             TextField("Text", text: Binding(
@@ -149,7 +159,7 @@ struct PlacementView: View {
                 set: { draft = $0; onEdit($0) }
             ))
             .textFieldStyle(.plain)
-            .font(.system(size: fontSize))
+            .font(font)
             .foregroundStyle(Color.black)
             .padding(.horizontal, inset)
             .focused($textFocused)
@@ -166,7 +176,7 @@ struct PlacementView: View {
             }
         } else {
             Text(text.isEmpty ? "Text" : text)
-                .font(.system(size: fontSize))
+                .font(font)
                 .foregroundStyle(text.isEmpty ? Color.gray.opacity(0.65) : Color.black)
                 .lineLimit(1)
                 .padding(.horizontal, inset)

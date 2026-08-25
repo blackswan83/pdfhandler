@@ -19,9 +19,37 @@ import CoreGraphics
 enum PlacementContent: Equatable {
     case signature(signatureID: UUID)
     case initials(signatureID: UUID)
-    case date(text: String)
-    case freeText(text: String)
+    case date(text: String, style: TextStyle)
+    case freeText(text: String, style: TextStyle)
     case checkbox(isChecked: Bool)
+
+    /// Text and typography of the text-bearing kinds, nil otherwise.
+    var textPayload: (text: String, style: TextStyle)? {
+        switch self {
+        case .date(let text, let style), .freeText(let text, let style):
+            return (text, style)
+        default:
+            return nil
+        }
+    }
+
+    /// The same content with a new style; a no-op for non-text kinds.
+    func withStyle(_ style: TextStyle) -> PlacementContent {
+        switch self {
+        case .date(let text, _):     return .date(text: text, style: style)
+        case .freeText(let text, _): return .freeText(text: text, style: style)
+        default:                     return self
+        }
+    }
+
+    /// The same content with new text; a no-op for non-text kinds.
+    func withText(_ text: String) -> PlacementContent {
+        switch self {
+        case .date(_, let style):     return .date(text: text, style: style)
+        case .freeText(_, let style): return .freeText(text: text, style: style)
+        default:                      return self
+        }
+    }
 
     var isImageBacked: Bool {
         switch self {

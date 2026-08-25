@@ -106,8 +106,8 @@ struct MergeView: View {
             }
             .frame(minHeight: 200, idealHeight: 280)
             .listStyle(.bordered)
-            .onDrop(of: [.pdf, .fileURL], isTargeted: nil) { providers in
-                loadPDFs(providers) { urls in
+            .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
+                PDFDrop.receive(providers) { urls in
                     appState.mergeItems.append(contentsOf: urls.map { MergeItem(url: $0) })
                 }
             }
@@ -149,8 +149,8 @@ struct MergeView: View {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color.secondary.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [6]))
         )
-        .onDrop(of: [.pdf, .fileURL], isTargeted: nil) { providers in
-            loadPDFs(providers) { urls in
+        .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
+            PDFDrop.receive(providers) { urls in
                 appState.mergeItems.append(contentsOf: urls.map { MergeItem(url: $0) })
             }
         }
@@ -191,38 +191,5 @@ struct MergeView: View {
         if panel.runModal() == .OK {
             appState.mergeItems.append(contentsOf: panel.urls.map { MergeItem(url: $0) })
         }
-    }
-
-    private func loadPDFs(_ providers: [NSItemProvider], onLoaded: @escaping ([URL]) -> Void) -> Bool {
-        var acceptedAny = false
-        var collected: [(Int, URL)] = []
-        let group = DispatchGroup()
-        for (order, provider) in providers.enumerated() {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                acceptedAny = true
-                group.enter()
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
-                    guard let data = data as? Data,
-                          let url = URL(dataRepresentation: data, relativeTo: nil),
-                          url.pathExtension.lowercased() == "pdf" else {
-                        group.leave()
-                        return
-                    }
-                    // Providers call back on arbitrary queues and in
-                    // arbitrary order; serialize through the main queue
-                    // and restore the drop order (row order defines the
-                    // merged page order).
-                    DispatchQueue.main.async {
-                        collected.append((order, url))
-                        group.leave()
-                    }
-                }
-            }
-        }
-        group.notify(queue: .main) {
-            let urls = collected.sorted { $0.0 < $1.0 }.map(\.1)
-            if !urls.isEmpty { onLoaded(urls) }
-        }
-        return acceptedAny
     }
 }

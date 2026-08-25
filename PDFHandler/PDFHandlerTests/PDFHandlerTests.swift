@@ -56,7 +56,7 @@ final class PDFHandlerTests: XCTestCase {
 
     func testPlacementEquatable() {
         let placement = Placement(
-            content: .freeText(text: "hello"),
+            content: .freeText(text: "hello", style: .default),
             pageIndex: 0,
             normalizedRect: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.05)
         )
@@ -67,7 +67,7 @@ final class PDFHandlerTests: XCTestCase {
         XCTAssertNotEqual(placement, moved)
 
         var retyped = placement
-        retyped.content = .freeText(text: "changed")
+        retyped.content = .freeText(text: "changed", style: .default)
         XCTAssertNotEqual(placement, retyped)
     }
 
@@ -174,8 +174,77 @@ final class PDFHandlerTests: XCTestCase {
     func testContentTraits() {
         XCTAssertTrue(PlacementContent.signature(signatureID: UUID()).keepsAspectRatio)
         XCTAssertTrue(PlacementContent.checkbox(isChecked: false).keepsAspectRatio)
-        XCTAssertFalse(PlacementContent.freeText(text: "").keepsAspectRatio)
-        XCTAssertTrue(PlacementContent.date(text: "x").isTextEditable)
+        XCTAssertFalse(PlacementContent.freeText(text: "", style: .default).keepsAspectRatio)
+        XCTAssertTrue(PlacementContent.date(text: "x", style: .default).isTextEditable)
         XCTAssertFalse(PlacementContent.checkbox(isChecked: true).isTextEditable)
+    }
+
+    // MARK: - Text styling
+
+    func testAutoFitTracksBoxHeightAndManualDoesNot() {
+        var style = TextStyle(font: .system, size: 12, autoFit: true)
+        // The factor is shared with the flattener, so preview and
+        // export agree by construction.
+        XCTAssertEqual(style.resolvedSize(boxHeight: 40),
+                       40 * PDFFlattener.Style.textFontFactor, accuracy: 0.001)
+        XCTAssertEqual(style.resolvedSize(boxHeight: 20),
+                       20 * PDFFlattener.Style.textFontFactor, accuracy: 0.001)
+
+        style.autoFit = false
+        XCTAssertEqual(style.resolvedSize(boxHeight: 40), 12)
+        XCTAssertEqual(style.resolvedSize(boxHeight: 20), 12)
+    }
+
+    func testManualSizeIsClamped() {
+        var style = TextStyle(font: .system, size: 500, autoFit: false)
+        XCTAssertEqual(style.resolvedSize(boxHeight: 30), TextStyle.maxSize)
+        style.size = 0.1
+        XCTAssertEqual(style.resolvedSize(boxHeight: 30), TextStyle.minSize)
+    }
+
+    func testEditingTextPreservesTypographyAndViceVersa() {
+        let content = PlacementContent.freeText(text: "Nuraxi Ltd", style: .default)
+
+        var style = TextStyle.default
+        style.font = .courier
+        style.autoFit = false
+        let restyled = content.withStyle(style)
+        XCTAssertEqual(restyled.textPayload?.text, "Nuraxi Ltd")
+        XCTAssertEqual(restyled.textPayload?.style.font, .courier)
+
+        let retexted = restyled.withText("Acme")
+        XCTAssertEqual(retexted.textPayload?.text, "Acme")
+        XCTAssertEqual(retexted.textPayload?.style.font, .courier,
+                       "typing must not reset typography")
+        XCTAssertEqual(retexted.textPayload?.style.autoFit, false)
+    }
+
+    func testStyleHelpersAreNoOpsForNonTextContent() {
+        let checkbox = PlacementContent.checkbox(isChecked: true)
+        XCTAssertNil(checkbox.textPayload)
+        XCTAssertEqual(checkbox.withText("x"), checkbox)
+        XCTAssertEqual(checkbox.withStyle(.default), checkbox)
+    }
+
+    func testEveryTypefaceResolvesToARealFont() {
+        for choice in TextFont.allCases {
+            let font = choice.nsFont(size: 14)
+            XCTAssertEqual(font.pointSize, 14, accuracy: 0.001, "\(choice) lost its size")
+        }
+    }
+
+    // MARK: - Compress modes
+
+    func testTargetSizeIsItsOwnModeStartingFromHighQuality() {
+        XCTAssertTrue(CompressMode.targetSize.isTargetSize)
+        XCTAssertNil(CompressMode.targetSize.typicalRange,
+                     "target size names an exact figure, not a typical range")
+        // The search walks down from a high ceiling, buying back as
+        // much quality as the target allows.
+        XCTAssertEqual(CompressMode.targetSize.preset.imageResolution, 300)
+
+        for mode in CompressMode.allCases where !mode.isTargetSize {
+            XCTAssertNotNil(mode.typicalRange, "\(mode) should advertise a typical range")
+        }
     }
 }

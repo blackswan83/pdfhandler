@@ -24,10 +24,16 @@ struct SignWorkspaceView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             Divider()
+            if showsTextInspector {
+                TextInspectorView()
+                    .environmentObject(appState)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                Divider()
+            }
             PDFPreviewView()
                 .environmentObject(appState)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .onDrop(of: [.pdf, .fileURL], isTargeted: nil, perform: handleDrop)
             if let message = appState.errorMessage {
                 banner(message, style: .error)
             } else if let saved = appState.lastSavedURL {
@@ -36,6 +42,14 @@ struct SignWorkspaceView: View {
         }
         .onAppear { installKeyMonitor() }
         .onDisappear { removeKeyMonitor() }
+    }
+
+    /// Shown while a text field is selected, or while the text tools
+    /// are armed so the style can be set before placing anything.
+    private var showsTextInspector: Bool {
+        appState.selectedTextPlacement != nil
+            || appState.activeTool == .freeText
+            || appState.activeTool == .date
     }
 
     // MARK: - Keyboard (⌫ delete, Esc deselect, arrow nudge)
@@ -133,11 +147,16 @@ struct SignWorkspaceView: View {
             zoomControls
             pagePicker
 
-            Button {
-                appState.saveSignedPDF()
+            Menu {
+                Toggle("Also save an unsigned filled copy", isOn: $appState.alsoSaveUnsignedCopy)
+                Divider()
+                Text("The original is never modified.")
             } label: {
                 Label("Save signed PDF", systemImage: "square.and.arrow.down")
+            } primaryAction: {
+                appState.saveSignedPDF()
             }
+            .menuStyle(.borderlessButton)
             .keyboardShortcut("s", modifiers: .command)
             .disabled(appState.document == nil || appState.placements.isEmpty)
             .fixedSize()
@@ -249,18 +268,4 @@ struct SignWorkspaceView: View {
         }
     }
 
-    private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        for provider in providers {
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { data, _ in
-                    guard let data = data as? Data,
-                          let url = URL(dataRepresentation: data, relativeTo: nil),
-                          url.pathExtension.lowercased() == "pdf" else { return }
-                    Task { @MainActor in appState.openDocument(at: url) }
-                }
-                return true
-            }
-        }
-        return false
-    }
 }

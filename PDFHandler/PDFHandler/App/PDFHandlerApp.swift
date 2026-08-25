@@ -10,8 +10,23 @@
 import SwiftUI
 import AppKit
 
+/// Handles PDFs opened from outside the app: double-clicked in Finder,
+/// dropped on the Dock icon, or passed via `open -a`. Without this,
+/// the Info.plist document-type declaration makes the app *offerable*
+/// as a PDF handler while it silently ignores the file.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
+        guard !pdfs.isEmpty else { return }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .openDocumentURLs, object: pdfs)
+        }
+    }
+}
+
 @main
 struct PDFHandlerApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appState = AppState()
 
     var body: some Scene {
@@ -88,4 +103,6 @@ extension Notification.Name {
     static let requestZoomOut    = Notification.Name("pdfhandler.requestZoomOut")
     static let requestZoomActual = Notification.Name("pdfhandler.requestZoomActual")
     static let requestZoomFit    = Notification.Name("pdfhandler.requestZoomFit")
+    /// Object is `[URL]` of PDFs to open, from Finder / Dock / open(1).
+    static let openDocumentURLs  = Notification.Name("pdfhandler.openDocumentURLs")
 }

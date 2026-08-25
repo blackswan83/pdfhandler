@@ -51,7 +51,8 @@ struct PDFFlattener {
         document: PDFDocument,
         sourceURL: URL,
         placements: [Placement],
-        signatures: [SavedSignature]
+        signatures: [SavedSignature],
+        outputSuffix: String = "_signed"
     ) throws -> URL {
         let byID = Dictionary(uniqueKeysWithValues: signatures.map { ($0.id, $0) })
 
@@ -72,7 +73,7 @@ struct PDFFlattener {
         let baseName = sourceURL.deletingPathExtension().lastPathComponent
         let outputURL = sourceURL
             .deletingLastPathComponent()
-            .appendingPathComponent("\(baseName)_signed.pdf")
+            .appendingPathComponent("\(baseName)\(outputSuffix).pdf")
 
         let placementsByPage = Dictionary(grouping: placements, by: \.pageIndex)
 
@@ -134,8 +135,8 @@ struct PDFFlattener {
             ctx.draw(cg, in: aspectFitRect(imageSize: CGSize(width: cg.width, height: cg.height), in: rect))
             ctx.restoreGState()
 
-        case .date(let text), .freeText(let text):
-            drawText(text, in: rect, context: ctx)
+        case .date(let text, let style), .freeText(let text, let style):
+            drawText(text, style: style, in: rect, context: ctx)
 
         case .checkbox(let isChecked):
             drawCheckbox(isChecked: isChecked, in: rect, context: ctx)
@@ -157,13 +158,14 @@ struct PDFFlattener {
         }
     }
 
-    /// Vector text, left-aligned and vertically centered, font scaled
-    /// to the box height — exactly how PlacementView previews it.
-    private func drawText(_ text: String, in rect: CGRect, context: CGContext) {
+    /// Vector text, left-aligned and vertically centered — exactly how
+    /// PlacementView previews it. `rect` is already in page points, so
+    /// a manual style size (also page points) is used unscaled.
+    private func drawText(_ text: String, style: TextStyle, in rect: CGRect, context: CGContext) {
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
 
-        let fontSize = max(4, rect.height * Style.textFontFactor)
-        let font = NSFont.systemFont(ofSize: fontSize)
+        let fontSize = style.resolvedSize(boxHeight: rect.height)
+        let font = style.font.nsFont(size: fontSize)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): NSColor.black.cgColor,
