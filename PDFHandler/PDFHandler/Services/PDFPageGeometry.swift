@@ -7,18 +7,19 @@
 //  same size, same orientation. Anything the user positions against
 //  the preview then lands identically in the exported PDF.
 //
-//  IMPORTANT — PDFKit already handles /Rotate, in both directions:
-//    • bounds(for:) returns rotation-adjusted bounds, so a page with
-//      /Rotate 90 already reports swapped width and height.
-//    • draw(with:to:) already applies the rotation transform.
+//  IMPORTANT — PDFKit splits /Rotate handling, and the two halves do
+//  NOT behave the same way. Both facts below are measured by probe
+//  tests in PDFHandlerTests, not assumed:
+//    • bounds(for:) is RAW. A 612x792 page with /Rotate 90 still
+//      reports 612x792, so the swap has to be done here.
+//    • draw(with:to:) ALREADY applies the rotation transform, so
+//      rotating the context by hand as well double-applies it.
 //
-//  An earlier version of this file asserted the opposite and
-//  compensated for rotation by hand. That double-applied it: the size
-//  was swapped back to portrait while the content was rotated a second
-//  time, so a perfectly straight scanned contract rendered sideways in
-//  the preview and would have exported that way too. Do not "fix"
-//  rotation here again without a rotated PDF in front of you — the
-//  probe test in PDFHandlerTests pins the real behaviour.
+//  Getting this backwards has now caused a real bug in each direction:
+//  first a hand-rolled rotation on top of PDFKit's, which rendered
+//  straight scanned contracts sideways; then, over-correcting, trusting
+//  bounds(for:) to swap when it does not. Do not change this without a
+//  failing probe test in front of you.
 //
 
 import PDFKit
@@ -27,20 +28,24 @@ import AppKit
 
 extension PDFPage {
     /// The page's /Rotate value normalized into 0 / 90 / 180 / 270.
-    /// Informational only: the geometry below must not act on it.
     var displayRotation: Int {
         ((rotation % 360) + 360) % 360
     }
 
-    /// Size of the page as displayed. PDFKit has already applied
-    /// /Rotate to these bounds.
+    /// Size of the page as displayed. bounds(for:) is raw, so quarter
+    /// turns swap width and height here.
     var displaySize: CGSize {
-        bounds(for: .mediaBox).size
+        let box = bounds(for: .mediaBox)
+        return displayRotation % 180 == 0
+            ? CGSize(width: box.width, height: box.height)
+            : CGSize(width: box.height, height: box.width)
     }
 
     /// Draws the page content (including its existing annotations)
     /// into a bottom-left-origin context, filling
     /// (0, 0, displaySize.width, displaySize.height).
+    ///
+    /// No rotation transform: draw(with:to:) performs it already.
     func drawDisplayOriented(in ctx: CGContext) {
         ctx.saveGState()
         draw(with: .mediaBox, to: ctx)
