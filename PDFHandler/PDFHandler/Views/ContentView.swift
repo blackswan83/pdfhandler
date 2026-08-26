@@ -17,23 +17,48 @@ import AppKit
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
+    @State private var isDropTargeted = false
+
+    /// Visible confirmation that a drag is over a live target. Without
+    /// it a drop that silently fails is indistinguishable from one the
+    /// app never saw.
+    private var dropBanner: some View {
+        Label("Drop to open", systemImage: "arrow.down.doc")
+            .font(.headline)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().stroke(Color.accentColor, lineWidth: 1.5))
+            .padding(.top, 16)
+            .transition(.opacity)
+    }
 
     var body: some View {
+        // Drop targets go on the panes, NOT on the NavigationSplitView.
+        // A split view is a container without a drawing area of its
+        // own, and an .onDrop attached to it never fires — which is
+        // exactly how drag-and-drop got broken when the per-pane
+        // handlers were consolidated onto the root.
         NavigationSplitView {
             sidebar
+                .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
+                    PDFDrop.receive(providers, onLoaded: openURLs)
+                }
         } detail: {
             detailPane
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onDrop(of: PDFDrop.acceptedTypes, isTargeted: $isDropTargeted) { providers in
+                    PDFDrop.receive(providers, onLoaded: openURLs)
+                }
+                .overlay(alignment: .top) {
+                    if isDropTargeted { dropBanner }
+                }
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $appState.isPresentingNewSignature) {
             NewSignatureView()
                 .environmentObject(appState)
-        }
-        // Whole-window drop target: dropping a PDF anywhere opens it.
-        // Previously only the preview accepted drops, so dropping on
-        // the sidebar, the toolbar, or an empty pane did nothing.
-        .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
-            PDFDrop.receive(providers, onLoaded: openURLs)
         }
         .modifier(FileCommandRouting(openURLs: openURLs, openPanel: openPDFInCurrentMode))
         .modifier(ZoomCommandRouting())

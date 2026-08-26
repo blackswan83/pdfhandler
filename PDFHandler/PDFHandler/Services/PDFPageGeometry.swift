@@ -4,9 +4,21 @@
 //
 //  Shared page-geometry helpers so the on-screen preview and the
 //  flattener use the exact same notion of "the page as displayed":
-//  same size, same /Rotate handling, same origin. Anything the user
-//  positions against the preview then lands identically in the
-//  exported PDF.
+//  same size, same orientation. Anything the user positions against
+//  the preview then lands identically in the exported PDF.
+//
+//  IMPORTANT — PDFKit already handles /Rotate, in both directions:
+//    • bounds(for:) returns rotation-adjusted bounds, so a page with
+//      /Rotate 90 already reports swapped width and height.
+//    • draw(with:to:) already applies the rotation transform.
+//
+//  An earlier version of this file asserted the opposite and
+//  compensated for rotation by hand. That double-applied it: the size
+//  was swapped back to portrait while the content was rotated a second
+//  time, so a perfectly straight scanned contract rendered sideways in
+//  the preview and would have exported that way too. Do not "fix"
+//  rotation here again without a rotated PDF in front of you — the
+//  probe test in PDFHandlerTests pins the real behaviour.
 //
 
 import PDFKit
@@ -15,54 +27,32 @@ import AppKit
 
 extension PDFPage {
     /// The page's /Rotate value normalized into 0 / 90 / 180 / 270.
+    /// Informational only: the geometry below must not act on it.
     var displayRotation: Int {
         ((rotation % 360) + 360) % 360
     }
 
-    /// Size of the page as displayed: the mediaBox with /Rotate
-    /// applied (90° / 270° swap width and height).
+    /// Size of the page as displayed. PDFKit has already applied
+    /// /Rotate to these bounds.
     var displaySize: CGSize {
-        let box = bounds(for: .mediaBox)
-        return displayRotation % 180 == 0
-            ? CGSize(width: box.width, height: box.height)
-            : CGSize(width: box.height, height: box.width)
+        bounds(for: .mediaBox).size
     }
 
     /// Draws the page content (including its existing annotations)
-    /// into a bottom-left-origin context so it occupies the rect
+    /// into a bottom-left-origin context, filling
     /// (0, 0, displaySize.width, displaySize.height).
-    ///
-    /// PDFPage.draw(with:to:) renders raw page space: it neither
-    /// applies /Rotate nor normalizes a non-zero mediaBox origin, so
-    /// both are compensated here.
     func drawDisplayOriented(in ctx: CGContext) {
-        let box = bounds(for: .mediaBox)
-        let display = displaySize
         ctx.saveGState()
-        switch displayRotation {
-        case 90:
-            ctx.translateBy(x: 0, y: display.height)
-            ctx.rotate(by: -.pi / 2)
-        case 180:
-            ctx.translateBy(x: display.width, y: display.height)
-            ctx.rotate(by: .pi)
-        case 270:
-            ctx.translateBy(x: display.width, y: 0)
-            ctx.rotate(by: .pi / 2)
-        default:
-            break
-        }
-        ctx.translateBy(x: -box.minX, y: -box.minY)
         draw(with: .mediaBox, to: ctx)
         ctx.restoreGState()
     }
 
-    /// Rasterize the displayed page (white background, /Rotate applied)
-    /// into a bitmap of exactly `pixelSize` pixels, returned as an
-    /// NSImage reporting `pointSize`. Pure CGBitmapContext: the scale
-    /// is deterministic (lockFocus silently picks the main screen's
-    /// backing factor) and it is safe off the main thread, which the
-    /// OCR path relies on.
+    /// Rasterize the displayed page (white background, correctly
+    /// oriented) into a bitmap of exactly `pixelSize` pixels, returned
+    /// as an NSImage reporting `pointSize`. Pure CGBitmapContext: the
+    /// scale is deterministic (lockFocus silently picks the main
+    /// screen's backing factor) and it is safe off the main thread,
+    /// which the OCR path relies on.
     func renderedDisplayImage(pixelSize: CGSize, pointSize: CGSize) -> NSImage? {
         let width = max(1, Int(pixelSize.width.rounded()))
         let height = max(1, Int(pixelSize.height.rounded()))

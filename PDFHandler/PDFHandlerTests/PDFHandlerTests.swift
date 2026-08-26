@@ -35,19 +35,35 @@ final class PDFHandlerTests: XCTestCase {
 
     // MARK: - Page display geometry
 
-    func testDisplaySizeSwapsForQuarterRotations() {
+    /// Pins the PDFKit behaviour the geometry helpers depend on.
+    ///
+    /// This exists because assuming the opposite shipped a real bug: a
+    /// straight scanned contract rendered sideways because rotation was
+    /// compensated by hand on top of the compensation PDFKit already
+    /// does. If this test ever fails, PDFKit changed and
+    /// PDFPage.displaySize / drawDisplayOriented must change with it.
+    func testPDFKitBoundsAlreadyApplyPageRotation() {
         let page = PDFPage()
-        let box = page.bounds(for: .mediaBox)
-
-        page.rotation = 0
-        XCTAssertEqual(page.displaySize, box.size)
+        let upright = page.bounds(for: .mediaBox).size
 
         page.rotation = 90
-        XCTAssertEqual(page.displaySize, CGSize(width: box.height, height: box.width))
+        let rotated = page.bounds(for: .mediaBox).size
+        XCTAssertEqual(rotated.width, upright.height, accuracy: 0.001,
+                       "bounds(for:) is expected to already swap for /Rotate 90")
+        XCTAssertEqual(rotated.height, upright.width, accuracy: 0.001)
+    }
 
-        page.rotation = 270
-        XCTAssertEqual(page.displaySize, CGSize(width: box.height, height: box.width))
+    func testDisplaySizeMirrorsBoundsAndNeverSwapsAgain() {
+        let page = PDFPage()
+        for rotation in [0, 90, 180, 270] {
+            page.rotation = rotation
+            XCTAssertEqual(page.displaySize, page.bounds(for: .mediaBox).size,
+                           "displaySize must not re-apply rotation (\(rotation)°)")
+        }
+    }
 
+    func testDisplayRotationNormalizesNegativeValues() {
+        let page = PDFPage()
         page.rotation = -90
         XCTAssertEqual(page.displayRotation, 270)
     }
