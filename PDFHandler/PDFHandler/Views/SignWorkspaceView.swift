@@ -34,6 +34,14 @@ struct SignWorkspaceView: View {
             PDFPreviewView()
                 .environmentObject(appState)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Belt and braces with the pane-level handler in
+                // ContentView: the preview is the target people
+                // actually aim at.
+                .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
+                    PDFDrop.receive(providers) { urls in
+                        if let first = urls.first { appState.openDocument(at: first) }
+                    }
+                }
             if let message = appState.errorMessage {
                 banner(message, style: .error)
             } else if let saved = appState.lastSavedURL {

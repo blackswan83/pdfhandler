@@ -35,21 +35,113 @@ final class PDFHandlerTests: XCTestCase {
 
     // MARK: - Page display geometry
 
-    func testDisplaySizeSwapsForQuarterRotations() {
+    /// PDFKit's bounds(for:) is RAW — it does not apply /Rotate. So
+    /// displaySize has to swap, and this test is what proves it rather
+    /// than assuming: asserting the opposite shipped a real bug.
+    func testPDFKitBoundsAreRawAndDoNotApplyPageRotation() {
+        let page = PDFPage()
+        let upright = page.bounds(for: .mediaBox).size
+
+        page.rotation = 90
+        XCTAssertEqual(page.bounds(for: .mediaBox).size, upright,
+                       "bounds(for:) is raw; if this changes, displaySize must stop swapping")
+    }
+
+    func testDisplaySizeSwapsForQuarterTurns() {
         let page = PDFPage()
         let box = page.bounds(for: .mediaBox)
 
         page.rotation = 0
         XCTAssertEqual(page.displaySize, box.size)
+        page.rotation = 180
+        XCTAssertEqual(page.displaySize, box.size)
 
-        page.rotation = 90
-        XCTAssertEqual(page.displaySize, CGSize(width: box.height, height: box.width))
+        for quarter in [90, 270] {
+            page.rotation = quarter
+            XCTAssertEqual(page.displaySize,
+                           CGSize(width: box.height, height: box.width),
+                           "\(quarter)° must swap width and height")
+        }
+    }
 
-        page.rotation = 270
-        XCTAssertEqual(page.displaySize, CGSize(width: box.height, height: box.width))
-
+    func testDisplayRotationNormalizesNegativeValues() {
+        let page = PDFPage()
         page.rotation = -90
         XCTAssertEqual(page.displayRotation, 270)
+    }
+
+    /// The test that would have caught the sideways-page bug: render a
+    /// page whose bottom half is black, rotate it a quarter turn, and
+    /// check where the black actually lands.
+    ///
+    /// After a quarter turn the split must run vertically — black on
+    /// one side, white on the other. If rotation is applied twice the
+    /// split stays horizontal (black ends up top instead of bottom),
+    /// which is exactly the failure this pins. Deliberately agnostic
+    /// about WHICH side, so it tests the invariant rather than a guess.
+    func testQuarterTurnedPageIsRotatedExactlyOnce() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rotation-probe-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        var box = CGRect(x: 0, y: 0, width: 200, height: 400)
+        guard let pdf = CGContext(url as CFURL, mediaBox: &box, nil) else {
+            return XCTFail("could not create the probe PDF")
+        }
+        pdf.beginPage(mediaBox: &box)
+        pdf.setFillColor(CGColor(gray: 0, alpha: 1))
+        pdf.fill(CGRect(x: 0, y: 0, width: 200, height: 200))   // bottom half
+        pdf.endPage()
+        pdf.closePDF()
+
+        guard let document = PDFDocument(url: url), let page = document.page(at: 0) else {
+            return XCTFail("could not reopen the probe PDF")
+        }
+        page.rotation = 90
+
+        let display = page.displaySize
+        XCTAssertEqual(display.width, 400, accuracy: 0.5, "quarter turn should report landscape")
+        XCTAssertEqual(display.height, 200, accuracy: 0.5)
+
+        guard let image = page.renderedDisplayImage(pixelSize: display, pointSize: display),
+              let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
+              let samples = Self.brightness(of: cg)
+        else { return XCTFail("could not rasterize the probe page") }
+
+        let w = cg.width, h = cg.height
+        let left   = samples(w / 4,     h / 2)
+        let right  = samples(3 * w / 4, h / 2)
+        let top    = samples(w / 2,     h / 4)
+        let bottom = samples(w / 2,     3 * h / 4)
+
+        XCTAssertGreaterThan(abs(left - right), 0.5,
+                             "a quarter turn must put the black half on one SIDE")
+        XCTAssertLessThan(abs(top - bottom), 0.25,
+                          "the split must not still be horizontal — that means rotation was applied twice")
+    }
+
+    /// Returns a sampler giving 0…1 brightness at a pixel.
+    private static func brightness(of image: CGImage) -> ((Int, Int) -> Double)? {
+        let w = image.width, h = image.height
+        guard w > 0, h > 0, let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let drew: Bool = bytes.withUnsafeMutableBytes { buffer in
+            guard let base = buffer.baseAddress,
+                  let ctx = CGContext(data: base, width: w, height: h, bitsPerComponent: 8,
+                                      bytesPerRow: w * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+            else { return false }
+            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drew else { return nil }
+        return { x, y in
+            let px = min(max(x, 0), w - 1), py = min(max(y, 0), h - 1)
+            let i = (py * w + px) * 4
+            return (Double(bytes[i]) + Double(bytes[i + 1]) + Double(bytes[i + 2])) / (3 * 255)
+        }
     }
 
     // MARK: - Placement equality (drives one-undo-per-gesture)
