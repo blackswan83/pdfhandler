@@ -23,7 +23,9 @@
 //    3. Drop connected specks below a size floor — paper grain and
 //       compression artefacts — using component labelling rather than
 //       morphological erosion, which would eat thin strokes.
-//    4. Crop to the ink so the saved asset has no dead margins.
+//    4. Hysteresis: keep weak alpha only where it connects to strong
+//       ink (anti-aliased stroke edges), never as free-floating haze.
+//    5. Crop to the ink so the saved asset has no dead margins.
 //
 //  The API is split into raster-in / raster-out around a pure core so
 //  the expensive part can run off the main thread: NSImage is not
@@ -132,6 +134,14 @@ enum SignatureExtractor {
 
         // 4. Remove specks: paper grain, dust, compression noise.
         removeSmallComponents(&alpha, width: width, height: height)
+
+        // 4b. Hysteresis: weak alpha survives only where it touches
+        //     surviving strong ink. Anti-aliased stroke edges qualify;
+        //     the faint veil of paper grain admitted just above the
+        //     matte floor (too weak for the despeckler to even look
+        //     at) does not — without this it ships as a grey haze
+        //     across the crop and drags the bounds out to the frame.
+        keepOnlyInkConnected(&alpha, width: width, height: height)
 
         // 5. Crop to the ink and composite.
         guard let box = inkBounds(alpha, width: width, height: height) else { return nil }
@@ -302,6 +312,39 @@ enum SignatureExtractor {
                 for idx in component { alpha[idx] = 0 }
             }
         }
+    }
+
+    /// Canny-style hysteresis over the matte: flood from every pixel
+    /// the despeckler considers real ink (alpha above its threshold)
+    /// across all non-zero alpha, and zero whatever is never reached.
+    /// Keeps the anti-aliased skirt of each stroke, kills isolated
+    /// sub-threshold noise the despeckler never examines.
+    private static func keepOnlyInkConnected(_ alpha: inout [Float], width: Int, height: Int) {
+        let count = width * height
+        let strong: Float = 0.18
+        var keep = [Bool](repeating: false, count: count)
+        var stack: [Int] = []
+        for i in 0..<count where alpha[i] > strong {
+            keep[i] = true
+            stack.append(i)
+        }
+        while let idx = stack.popLast() {
+            let x = idx % width, y = idx / width
+            for dy in -1...1 {
+                let ny = y + dy
+                guard ny >= 0, ny < height else { continue }
+                for dx in -1...1 where !(dx == 0 && dy == 0) {
+                    let nx = x + dx
+                    guard nx >= 0, nx < width else { continue }
+                    let n = ny * width + nx
+                    if !keep[n], alpha[n] > 0 {
+                        keep[n] = true
+                        stack.append(n)
+                    }
+                }
+            }
+        }
+        for i in 0..<count where !keep[i] { alpha[i] = 0 }
     }
 
     // MARK: - Bounds + composite
