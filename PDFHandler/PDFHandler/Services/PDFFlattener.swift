@@ -30,7 +30,7 @@ enum PDFFlattenerError: LocalizedError {
         case .cannotOpen: return "Could not open the PDF."
         case .unknownSignature(let id): return "Signature \(id) is not in the library."
         case .unreadableSignature(let name): return "The signature \"\(name)\" could not be read. Re-add it to the library."
-        case .writeFailed(let url): return "Failed to write signed PDF to \(url.path)."
+        case .writeFailed(let url): return "Could not write the PDF to \(url.path)."
         }
     }
 }
@@ -46,14 +46,17 @@ struct PDFFlattener {
 
     /// Writes a copy of the (in-memory) `document` — the exact pages
     /// the user previewed — with every `placement` drawn into the
-    /// page. Output name: `<original>_signed.pdf` next to the original.
+    /// page, to exactly `outputURL`. Choosing where that is (next to
+    /// the original, a save panel, a temp file) is the caller's
+    /// business: baking `<source dir>/<name>_signed.pdf` in here is
+    /// what made saving fail with no way out whenever the source sat
+    /// somewhere unwritable, like Mail's downloads container.
     func flatten(
         document: PDFDocument,
-        sourceURL: URL,
         placements: [Placement],
         signatures: [SavedSignature],
-        outputSuffix: String = "_signed"
-    ) throws -> URL {
+        to outputURL: URL
+    ) throws {
         let byID = Dictionary(uniqueKeysWithValues: signatures.map { ($0.id, $0) })
 
         // Fail fast on dangling or unreadable signature references so a
@@ -69,11 +72,6 @@ struct PDFFlattener {
                 }
             }
         }
-
-        let baseName = sourceURL.deletingPathExtension().lastPathComponent
-        let outputURL = sourceURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("\(baseName)\(outputSuffix).pdf")
 
         let placementsByPage = Dictionary(grouping: placements, by: \.pageIndex)
 
@@ -99,7 +97,21 @@ struct PDFFlattener {
         guard FileManager.default.fileExists(atPath: outputURL.path) else {
             throw PDFFlattenerError.writeFailed(outputURL)
         }
-        return outputURL
+    }
+
+    /// Destination for the "filled but unsigned" companion, derived
+    /// from wherever the signed copy actually went — including a name
+    /// the user chose freely in a save panel.
+    /// `…/Offer_signed.pdf` → `…/Offer_filled.pdf`;
+    /// `…/Any Name.pdf` → `…/Any Name_filled.pdf`.
+    static func companionURL(besides signedURL: URL, suffix: String) -> URL {
+        var base = signedURL.deletingPathExtension().lastPathComponent
+        if base.hasSuffix("_signed") {
+            base = String(base.dropLast("_signed".count))
+        }
+        return signedURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(base + suffix + ".pdf")
     }
 
     /// Convert a normalized rect (top-left origin, 0…1) to PDF page

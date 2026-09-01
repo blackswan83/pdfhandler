@@ -426,6 +426,47 @@ final class AppState: ObservableObject {
         activeInitialsID  = entries.first(where: { $0.role == .initials  })?.id
     }
 
+    /// Entry currently being re-processed by `isolateSignatureInk`,
+    /// so its row can show progress instead of a second button press.
+    @Published private(set) var isolatingSignatureID: UUID?
+
+    /// Re-run ink isolation on an existing library entry. This is the
+    /// fix for signatures imported before extraction existed (they
+    /// survive reinstalls by design): they still sit on an opaque
+    /// white card and blank out whatever they are placed over.
+    func isolateSignatureInk(id: UUID) {
+        guard isolatingSignatureID == nil,
+              let entry = signatures.first(where: { $0.id == id }),
+              let image = entry.image else { return }
+        let options = SignatureExtractor.Options()
+        guard let raster = SignatureExtractor.raster(from: image, maxDimension: options.maxDimension) else {
+            errorMessage = "Could not read \"\(entry.name)\"."
+            return
+        }
+        isolatingSignatureID = id
+        Task { [weak self] in
+            let output = await Task.detached(priority: .userInitiated) {
+                SignatureExtractor.extract(raster, options: options)
+            }.value
+            guard let self else { return }
+            self.isolatingSignatureID = nil
+            guard let output,
+                  let extracted = SignatureExtractor.image(from: output),
+                  let data = extracted.pngData() else {
+                self.errorMessage = "No clear ink found in \"\(entry.name)\" — try re-importing it from a sharper photo."
+                return
+            }
+            // Re-find by id: the library may have changed meanwhile.
+            guard let idx = self.signatures.firstIndex(where: { $0.id == id }) else { return }
+            let old = self.signatures[idx]
+            self.signatures[idx] = SavedSignature(
+                id: old.id, name: old.name, imageData: data,
+                createdAt: old.createdAt, role: old.role
+            )
+            self.library.save(self.signatures)
+        }
+    }
+
     func deleteSignature(id: UUID) {
         let role = signatures.first(where: { $0.id == id })?.role ?? .signature
         signatures.removeAll { $0.id == id }
@@ -605,7 +646,13 @@ final class AppState: ObservableObject {
 
     // MARK: - Save (Sign mode)
 
-    func saveSignedPDF() {
+    /// Save the flattened PDF. By default it lands next to the source
+    /// as `<name>_signed.pdf`; `askingWhere` forces a save panel. When
+    /// the source folder cannot take new files — a PDF opened straight
+    /// out of another app's container ("Mail Downloads" is the everyday
+    /// case), a read-only volume — the panel appears automatically
+    /// instead of failing with nowhere to go.
+    func saveSignedPDF(askingWhere: Bool = false) {
         guard let source = documentURL, let document else {
             errorMessage = "No document open."
             return
@@ -615,40 +662,149 @@ final class AppState: ObservableObject {
             return
         }
         editingPlacementID = nil // commit any in-progress text edit
-        do {
-            let output = try flattener.flatten(
-                document: document, sourceURL: source,
-                placements: placements, signatures: signatures
-            )
 
+        // Flatten into temporary files first: rendering problems
+        // surface before any destination question, and a half-written
+        // file can never be left in the user's folder.
+        let fm = FileManager.default
+        let signedTemp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
+        var filledTemp: URL?
+        do {
+            try flattener.flatten(
+                document: document, placements: placements,
+                signatures: signatures, to: signedTemp
+            )
             // Optional "filled but not signed" companion: every field
             // except the signature and initials images. The untouched
             // original remains the third copy.
-            var revealed = [output]
             if alsoSaveUnsignedCopy {
                 let unsigned = placements.filter { !$0.content.isImageBacked }
                 if !unsigned.isEmpty {
-                    let filled = try flattener.flatten(
-                        document: document, sourceURL: source,
-                        placements: unsigned, signatures: signatures,
-                        outputSuffix: "_filled"
+                    let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
+                    try flattener.flatten(
+                        document: document, placements: unsigned,
+                        signatures: signatures, to: temp
                     )
-                    revealed.append(filled)
-                }
-            }
-
-            lastSavedURL = output
-            errorMessage = nil
-            NSWorkspace.shared.activateFileViewerSelecting(revealed)
-            Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                if let self, self.lastSavedURL == output {
-                    self.lastSavedURL = nil
+                    filledTemp = temp
                 }
             }
         } catch {
             errorMessage = error.localizedDescription
             lastSavedURL = nil
+            return
+        }
+        defer {
+            // No-ops for temps that were successfully moved into place.
+            try? fm.removeItem(at: signedTemp)
+            if let filledTemp { try? fm.removeItem(at: filledTemp) }
+        }
+
+        // Where should the signed copy go?
+        let sourceDir = source.deletingLastPathComponent()
+        let suggestedName = source.deletingPathExtension().lastPathComponent + "_signed.pdf"
+        var signedURL = sourceDir.appendingPathComponent(suggestedName)
+        var userPicked = false
+
+        if askingWhere || Self.needsSavePrompt(directory: sourceDir) {
+            let startDir = Self.needsSavePrompt(directory: sourceDir) ? nil : sourceDir
+            guard let chosen = promptForSaveDestination(
+                suggestedName: suggestedName, startingIn: startDir
+            ) else { return } // user cancelled — not an error
+            signedURL = chosen
+            userPicked = true
+        }
+
+        do {
+            try Self.place(fileAt: signedTemp, at: signedURL)
+        } catch _ where !userPicked {
+            // The write failed even though the folder looked fine — TCC
+            // denials are invisible to a writability check. Ask instead
+            // of failing.
+            guard let chosen = promptForSaveDestination(
+                suggestedName: suggestedName, startingIn: nil
+            ) else { return }
+            signedURL = chosen
+            userPicked = true
+            do {
+                try Self.place(fileAt: signedTemp, at: signedURL)
+            } catch {
+                errorMessage = "Could not save \(signedURL.lastPathComponent): \(error.localizedDescription)"
+                lastSavedURL = nil
+                return
+            }
+        } catch {
+            errorMessage = "Could not save \(signedURL.lastPathComponent): \(error.localizedDescription)"
+            lastSavedURL = nil
+            return
+        }
+
+        // The filled companion goes wherever the signed copy went.
+        errorMessage = nil
+        var revealed = [signedURL]
+        if let filledTemp {
+            let filledURL = PDFFlattener.companionURL(besides: signedURL, suffix: "_filled")
+            do {
+                try Self.place(fileAt: filledTemp, at: filledURL)
+                revealed.append(filledURL)
+            } catch {
+                errorMessage = "The signed copy was saved, but the filled copy was not: \(error.localizedDescription)"
+            }
+        }
+
+        lastSavedURL = signedURL
+        // Reveal in Finder only when the app picked the location. When
+        // the user chose it in the panel they know exactly where it
+        // went, and yanking focus over to Finder is just noise.
+        if !userPicked {
+            NSWorkspace.shared.activateFileViewerSelecting(revealed)
+        }
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if let self, self.lastSavedURL == signedURL {
+                self.lastSavedURL = nil
+            }
+        }
+    }
+
+    /// True when creating files in `directory` is known not to work:
+    /// no write permission, or the folder belongs to another app's
+    /// sandbox container, where TCC blocks new files even though a
+    /// plain writability check says yes (opening the PDF only granted
+    /// access to that one file, not its folder).
+    private static func needsSavePrompt(directory: URL) -> Bool {
+        let fm = FileManager.default
+        if !fm.isWritableFile(atPath: directory.path) { return true }
+        let home = fm.homeDirectoryForCurrentUser.standardizedFileURL.path
+        let path = directory.standardizedFileURL.path
+        return path.hasPrefix(home + "/Library/Containers/")
+            || path.hasPrefix(home + "/Library/Mail")
+    }
+
+    private func promptForSaveDestination(suggestedName: String, startingIn directory: URL?) -> URL? {
+        let panel = NSSavePanel()
+        panel.title = "Save Signed PDF"
+        panel.nameFieldStringValue = suggestedName
+        panel.allowedContentTypes = [.pdf]
+        panel.canCreateDirectories = true
+        panel.directoryURL = directory
+            ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    /// Move a finished temp file into its destination, replacing any
+    /// existing file — matching the long-standing behaviour of
+    /// overwriting `<name>_signed.pdf` on every save.
+    private static func place(fileAt temp: URL, at destination: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+        do {
+            try fm.moveItem(at: temp, to: destination)
+        } catch {
+            // Cross-volume oddities: a copy can succeed where the move
+            // failed; the temp is cleaned up by the caller either way.
+            try fm.copyItem(at: temp, to: destination)
         }
     }
 

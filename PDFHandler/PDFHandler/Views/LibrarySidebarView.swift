@@ -77,7 +77,10 @@ struct LibrarySidebarSections: View {
                 LibraryRow(
                     entry: entry,
                     isActive: entry.id == activeID,
+                    needsInkIsolation: OpacityCheckCache.hasOpaqueBackground(entry),
+                    isIsolating: appState.isolatingSignatureID == entry.id,
                     onActivate: { onActivate(entry.id) },
+                    onIsolate: { appState.isolateSignatureInk(id: entry.id) },
                     onDelete: { pendingDelete = entry }
                 )
             }
@@ -120,10 +123,29 @@ struct LibrarySidebarSections: View {
     }
 }
 
+/// Whether an entry's image still sits on an opaque card, cached
+/// because sidebar rows re-evaluate on every app-state change (every
+/// tick of a drag) and the check decodes the image. Keyed by id plus
+/// data length so isolating an entry (same id, new bytes) refreshes.
+private enum OpacityCheckCache {
+    static let cache = NSCache<NSString, NSNumber>()
+
+    static func hasOpaqueBackground(_ entry: SavedSignature) -> Bool {
+        let key = "\(entry.id.uuidString)-\(entry.imageData.count)" as NSString
+        if let cached = cache.object(forKey: key) { return cached.boolValue }
+        let value = entry.image.map(SignatureExtractor.hasOpaqueBackground) ?? false
+        cache.setObject(NSNumber(value: value), forKey: key)
+        return value
+    }
+}
+
 private struct LibraryRow: View {
     let entry: SavedSignature
     let isActive: Bool
+    let needsInkIsolation: Bool
+    let isIsolating: Bool
     let onActivate: () -> Void
+    let onIsolate: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -137,7 +159,20 @@ private struct LibraryRow: View {
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 56, height: 22)
                             .padding(2)
-                            .background(Color.white)
+                            // A signature line behind the thumbnail:
+                            // an entry still on an opaque card visibly
+                            // covers it, which is exactly what it will
+                            // do to the document.
+                            .background(
+                                ZStack {
+                                    Color.white
+                                    Rectangle()
+                                        .fill(Color.black.opacity(0.35))
+                                        .frame(height: 1)
+                                        .offset(y: 7)
+                                        .padding(.horizontal, 3)
+                                }
+                            )
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     Text(entry.name)
@@ -150,6 +185,18 @@ private struct LibraryRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+
+            if isIsolating {
+                ProgressView()
+                    .controlSize(.small)
+            } else if needsInkIsolation {
+                Button(action: onIsolate) {
+                    Image(systemName: "wand.and.stars")
+                        .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.borderless)
+                .help("Remove the paper background so this signature overlays lines and text instead of covering them")
+            }
 
             Button(action: onDelete) {
                 Image(systemName: "trash")

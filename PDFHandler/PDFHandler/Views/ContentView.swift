@@ -34,11 +34,15 @@ struct ContentView: View {
     }
 
     var body: some View {
-        // Drop targets go on the panes, NOT on the NavigationSplitView.
-        // A split view is a container without a drawing area of its
-        // own, and an .onDrop attached to it never fires — which is
-        // exactly how drag-and-drop got broken when the per-pane
-        // handlers were consolidated onto the root.
+        // Two layers of drop handling. The FileDropCatcher overlay is
+        // the real target: an AppKit drag destination covering the
+        // whole window that also understands file promises (Mail
+        // attachments, Safari downloads), which SwiftUI's .onDrop
+        // cannot resolve. The per-pane .onDrop handlers underneath are
+        // the fallback for plain Finder drags — they go on the panes,
+        // NOT on the NavigationSplitView: a split view is a container
+        // without a drawing area of its own, and an .onDrop attached
+        // to it never fires.
         NavigationSplitView {
             sidebar
                 .onDrop(of: PDFDrop.acceptedTypes, isTargeted: nil) { providers in
@@ -51,11 +55,14 @@ struct ContentView: View {
                 .onDrop(of: PDFDrop.acceptedTypes, isTargeted: $isDropTargeted) { providers in
                     PDFDrop.receive(providers, onLoaded: openURLs)
                 }
-                .overlay(alignment: .top) {
-                    if isDropTargeted { dropBanner }
-                }
         }
         .navigationSplitViewStyle(.balanced)
+        .overlay {
+            FileDropCatcher(isTargeted: $isDropTargeted, onURLs: openURLs)
+        }
+        .overlay(alignment: .top) {
+            if isDropTargeted { dropBanner }
+        }
         .sheet(isPresented: $appState.isPresentingNewSignature) {
             NewSignatureView()
                 .environmentObject(appState)
@@ -148,6 +155,9 @@ private struct FileCommandRouting: ViewModifier {
             }
             .onReceive(NotificationCenter.default.publisher(for: .requestSaveSigned)) { _ in
                 if appState.mode == .sign { appState.saveSignedPDF() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .requestSaveSignedAs)) { _ in
+                if appState.mode == .sign { appState.saveSignedPDF(askingWhere: true) }
             }
             .onReceive(NotificationCenter.default.publisher(for: .requestUndo)) { _ in
                 appState.undoCoordinator.undo()

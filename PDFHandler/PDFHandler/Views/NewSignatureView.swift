@@ -208,18 +208,21 @@ struct NewSignatureView: View {
             .onChange(of: isolateInk) { _ in reextract() }
 
         if isolateInk {
+            // Low sensitivity keeps only strong strokes ("Clean");
+            // high sensitivity admits fainter ink at the cost of some
+            // paper texture. Labels match the ends of the value range.
             HStack(spacing: 8) {
-                Text("Faint ink")
+                Text("Clean")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Slider(value: $inkSensitivity, in: 0...1)
                     .frame(maxWidth: 200)
                     .onChange(of: inkSensitivity) { _ in reextract() }
-                Text("Clean")
+                Text("Faint ink")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            Text("Estimates the paper brightness locally, so shadows and uneven lighting are handled. Slide left to catch faint strokes, right to reject paper texture.")
+            Text("Estimates the paper brightness locally, so shadows and uneven lighting are handled. Slide right to catch faint strokes, left to reject paper texture.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

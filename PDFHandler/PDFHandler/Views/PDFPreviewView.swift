@@ -183,6 +183,10 @@ struct PDFPreviewView: View {
                 NotificationCenter.default.post(name: .requestOpenPanel, object: nil)
             }
             .keyboardShortcut("o", modifiers: .command)
+            Text("Or drag one anywhere into this window — from Finder,\nor an attachment straight out of Mail.")
+                .font(.callout)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

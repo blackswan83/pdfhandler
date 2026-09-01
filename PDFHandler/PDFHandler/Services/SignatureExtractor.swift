@@ -23,7 +23,9 @@
 //    3. Drop connected specks below a size floor — paper grain and
 //       compression artefacts — using component labelling rather than
 //       morphological erosion, which would eat thin strokes.
-//    4. Crop to the ink so the saved asset has no dead margins.
+//    4. Hysteresis: keep weak alpha only where it connects to strong
+//       ink (anti-aliased stroke edges), never as free-floating haze.
+//    5. Crop to the ink so the saved asset has no dead margins.
 //
 //  The API is split into raster-in / raster-out around a pure core so
 //  the expensive part can run off the main thread: NSImage is not
@@ -120,13 +122,26 @@ enum SignatureExtractor {
         var alpha = [Float](repeating: 0, count: count)
         for i in 0..<count {
             let bg = paper[i]
-            let span = max(bg - inkLevel, 12)      // guard flat images
+            // The span floor matters when ink is a small fraction of
+            // the frame: the dark percentile then lands on paper, the
+            // span collapses, and a small floor amplifies paper grain
+            // into the matte. 40 keeps ±6 levels of JPEG noise under
+            // the alpha floor while genuine ink still saturates.
+            let span = max(bg - inkLevel, 40)
             let raw = (bg - luma[i]) / span         // 0 at paper, 1 at ink
             alpha[i] = min(max((raw - floor) / max(1 - floor, 0.01), 0), 1)
         }
 
         // 4. Remove specks: paper grain, dust, compression noise.
         removeSmallComponents(&alpha, width: width, height: height)
+
+        // 4b. Hysteresis: weak alpha survives only where it touches
+        //     surviving strong ink. Anti-aliased stroke edges qualify;
+        //     the faint veil of paper grain admitted just above the
+        //     matte floor (too weak for the despeckler to even look
+        //     at) does not — without this it ships as a grey haze
+        //     across the crop and drags the bounds out to the frame.
+        keepOnlyInkConnected(&alpha, width: width, height: height)
 
         // 5. Crop to the ink and composite.
         guard let box = inkBounds(alpha, width: width, height: height) else { return nil }
@@ -149,6 +164,51 @@ enum SignatureExtractor {
               )
         else { return nil }
         return NSImage(cgImage: cg, size: NSSize(width: raster.width, height: raster.height))
+    }
+
+    // MARK: - Opacity check
+
+    /// Whether the image still sits on an opaque card. A properly
+    /// isolated signature has see-through borders; a photo, scan or
+    /// pre-extraction import does not. Drives the "isolate ink"
+    /// affordance in the library list, so it only appears on entries
+    /// that actually need it.
+    static func hasOpaqueBackground(_ image: NSImage) -> Bool {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
+        switch cg.alphaInfo {
+        case .none, .noneSkipLast, .noneSkipFirst:
+            return true // no alpha channel at all
+        default:
+            break
+        }
+
+        let side = 24
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { return false }
+        var bytes = [UInt8](repeating: 0, count: side * side * 4)
+        let ok: Bool = bytes.withUnsafeMutableBytes { buffer in
+            guard let base = buffer.baseAddress,
+                  let ctx = CGContext(
+                    data: base, width: side, height: side, bitsPerComponent: 8,
+                    bytesPerRow: side * 4, space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  )
+            else { return false }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        guard ok else { return false }
+
+        // Sample the border ring: an isolated signature (which is
+        // cropped with a margin) is transparent along its edges; an
+        // opaque card is solid all the way around.
+        var opaque = 0, total = 0
+        for y in 0..<side {
+            for x in 0..<side where x == 0 || y == 0 || x == side - 1 || y == side - 1 {
+                total += 1
+                if bytes[(y * side + x) * 4 + 3] > 245 { opaque += 1 }
+            }
+        }
+        return total > 0 && Double(opaque) / Double(total) > 0.9
     }
 
     // MARK: - Paper level
@@ -252,6 +312,39 @@ enum SignatureExtractor {
                 for idx in component { alpha[idx] = 0 }
             }
         }
+    }
+
+    /// Canny-style hysteresis over the matte: flood from every pixel
+    /// the despeckler considers real ink (alpha above its threshold)
+    /// across all non-zero alpha, and zero whatever is never reached.
+    /// Keeps the anti-aliased skirt of each stroke, kills isolated
+    /// sub-threshold noise the despeckler never examines.
+    private static func keepOnlyInkConnected(_ alpha: inout [Float], width: Int, height: Int) {
+        let count = width * height
+        let strong: Float = 0.18
+        var keep = [Bool](repeating: false, count: count)
+        var stack: [Int] = []
+        for i in 0..<count where alpha[i] > strong {
+            keep[i] = true
+            stack.append(i)
+        }
+        while let idx = stack.popLast() {
+            let x = idx % width, y = idx / width
+            for dy in -1...1 {
+                let ny = y + dy
+                guard ny >= 0, ny < height else { continue }
+                for dx in -1...1 where !(dx == 0 && dy == 0) {
+                    let nx = x + dx
+                    guard nx >= 0, nx < width else { continue }
+                    let n = ny * width + nx
+                    if !keep[n], alpha[n] > 0 {
+                        keep[n] = true
+                        stack.append(n)
+                    }
+                }
+            }
+        }
+        for i in 0..<count where !keep[i] { alpha[i] = 0 }
     }
 
     // MARK: - Bounds + composite

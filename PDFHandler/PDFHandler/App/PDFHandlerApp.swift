@@ -44,10 +44,14 @@ struct PDFHandlerApp: App {
                 .keyboardShortcut("o", modifiers: .command)
             }
             CommandGroup(after: .saveItem) {
-                Button("Save Signed PDF…") {
+                Button("Save Signed PDF") {
                     NotificationCenter.default.post(name: .requestSaveSigned, object: nil)
                 }
                 .keyboardShortcut("s", modifiers: .command)
+                Button("Save Signed PDF As…") {
+                    NotificationCenter.default.post(name: .requestSaveSignedAs, object: nil)
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
             }
             CommandGroup(after: .toolbar) {
                 Button("Zoom In") {
@@ -97,6 +101,8 @@ struct PDFHandlerApp: App {
 extension Notification.Name {
     static let requestOpenPanel  = Notification.Name("pdfhandler.requestOpenPanel")
     static let requestSaveSigned = Notification.Name("pdfhandler.requestSaveSigned")
+    /// Save panel variant: the user chooses the destination.
+    static let requestSaveSignedAs = Notification.Name("pdfhandler.requestSaveSignedAs")
     static let requestUndo       = Notification.Name("pdfhandler.requestUndo")
     static let requestRedo       = Notification.Name("pdfhandler.requestRedo")
     static let requestZoomIn     = Notification.Name("pdfhandler.requestZoomIn")
