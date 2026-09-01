@@ -62,9 +62,11 @@ Disabling Gatekeeper globally (`spctl --master-disable`) also works, but it lowe
 1. Click **+ Add signature…** (or **+ Add initials…**) in the sidebar. Pick one of:
    - **Type** — your name in a handwriting font (four styles).
    - **Draw** — freehand on a canvas.
-   - **Import** — PNG / JPEG / TIFF from disk.
-   - **Paste** — whatever image is on the clipboard (⌘V).
-2. Open a PDF (⌘O, or drop it onto the window).
+   - **Import** — PNG / JPEG / TIFF / HEIC from disk. Photograph a signature written with a dark pen on white paper and the app isolates the ink onto a transparent background — it estimates the paper brightness locally, so shadows and uneven phone-photo lighting are handled — and the result overlays ruled lines and text instead of covering them with a white card. A sensitivity slider trades faint-stroke pickup against paper texture.
+   - **Paste** — whatever image is on the clipboard (⌘V); ink isolation applies here too.
+
+   Entries saved before ink isolation existed (they survive reinstalls by design) still carry their opaque background: rows whose image would cover the page show a wand button — click it to re-isolate the ink in place. Thumbnails render over a signature line, so an opaque card is visible at a glance.
+2. Open a PDF (⌘O, or drag one anywhere into the window — from Finder, or an attachment straight out of Mail; Mail hands over a *file promise* rather than a file, and the app receives it properly).
 3. Pick a field type in the palette above the preview: **Signature**, **Initials**, **Date**, **Free text**, **Checkbox**.
 4. Click on the page to drop a placement.
    - **Move** — drag the body. **Resize** — drag the corner knob (images and checkboxes keep their aspect; text boxes resize freely and the text scales with the box).
@@ -74,6 +76,8 @@ Disabling Gatekeeper globally (`spctl --master-disable`) also works, but it lowe
    - Right-click for **Apply to every page** (handy for initials or a date stamp on long contracts).
 5. ⌘Z / ⌘⇧Z to undo / redo.
 6. ⌘S writes `<name>_signed.pdf` next to the original and reveals it in Finder. Fields are burned in permanently (flattened), so they show up in any PDF viewer.
+   - **⇧⌘S (Save Signed PDF As…)** saves wherever you choose instead. The Save button's menu has the same option, plus **Also save an unsigned filled copy** (`<name>_filled.pdf`: every field except the signature/initials images — useful when the counterparty wants the filled form before it is signed).
+   - If the original sits somewhere new files can't go — a PDF opened straight out of Mail lives in Mail's private container, a read-only volume — the save panel appears automatically instead of failing. The original is never modified.
 
 Library lives at `~/Library/Application Support/PDFHandler/signatures.json`.
 

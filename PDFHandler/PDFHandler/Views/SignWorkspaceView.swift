@@ -156,6 +156,12 @@ struct SignWorkspaceView: View {
             pagePicker
 
             Menu {
+                // ⇧⌘S lives on the File menu; this entry is the
+                // discoverable route to the same panel.
+                Button("Save to a Chosen Folder…") {
+                    appState.saveSignedPDF(askingWhere: true)
+                }
+                Divider()
                 Toggle("Also save an unsigned filled copy", isOn: $appState.alsoSaveUnsignedCopy)
                 Divider()
                 Text("The original is never modified.")

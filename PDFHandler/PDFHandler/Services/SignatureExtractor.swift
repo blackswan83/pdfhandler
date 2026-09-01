@@ -120,7 +120,12 @@ enum SignatureExtractor {
         var alpha = [Float](repeating: 0, count: count)
         for i in 0..<count {
             let bg = paper[i]
-            let span = max(bg - inkLevel, 12)      // guard flat images
+            // The span floor matters when ink is a small fraction of
+            // the frame: the dark percentile then lands on paper, the
+            // span collapses, and a small floor amplifies paper grain
+            // into the matte. 40 keeps ±6 levels of JPEG noise under
+            // the alpha floor while genuine ink still saturates.
+            let span = max(bg - inkLevel, 40)
             let raw = (bg - luma[i]) / span         // 0 at paper, 1 at ink
             alpha[i] = min(max((raw - floor) / max(1 - floor, 0.01), 0), 1)
         }
@@ -149,6 +154,51 @@ enum SignatureExtractor {
               )
         else { return nil }
         return NSImage(cgImage: cg, size: NSSize(width: raster.width, height: raster.height))
+    }
+
+    // MARK: - Opacity check
+
+    /// Whether the image still sits on an opaque card. A properly
+    /// isolated signature has see-through borders; a photo, scan or
+    /// pre-extraction import does not. Drives the "isolate ink"
+    /// affordance in the library list, so it only appears on entries
+    /// that actually need it.
+    static func hasOpaqueBackground(_ image: NSImage) -> Bool {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
+        switch cg.alphaInfo {
+        case .none, .noneSkipLast, .noneSkipFirst:
+            return true // no alpha channel at all
+        default:
+            break
+        }
+
+        let side = 24
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB) else { return false }
+        var bytes = [UInt8](repeating: 0, count: side * side * 4)
+        let ok: Bool = bytes.withUnsafeMutableBytes { buffer in
+            guard let base = buffer.baseAddress,
+                  let ctx = CGContext(
+                    data: base, width: side, height: side, bitsPerComponent: 8,
+                    bytesPerRow: side * 4, space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  )
+            else { return false }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        guard ok else { return false }
+
+        // Sample the border ring: an isolated signature (which is
+        // cropped with a margin) is transparent along its edges; an
+        // opaque card is solid all the way around.
+        var opaque = 0, total = 0
+        for y in 0..<side {
+            for x in 0..<side where x == 0 || y == 0 || x == side - 1 || y == side - 1 {
+                total += 1
+                if bytes[(y * side + x) * 4 + 3] > 245 { opaque += 1 }
+            }
+        }
+        return total > 0 && Double(opaque) / Double(total) > 0.9
     }
 
     // MARK: - Paper level
