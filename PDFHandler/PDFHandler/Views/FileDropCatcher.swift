@@ -51,7 +51,8 @@ final class DropCatcherNSView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        var types = NSFilePromiseReceiver.readableDraggedTypes.map(NSPasteboard.PasteboardType.init)
+        var types = NSFilePromiseReceiver.readableDraggedTypes
+            .map { NSPasteboard.PasteboardType(rawValue: $0) }
         types.append(.fileURL)
         registerForDraggedTypes(types)
     }
