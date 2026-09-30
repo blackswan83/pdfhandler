@@ -25,6 +25,9 @@ struct InlineTextField: NSViewRepresentable {
     let initialText: String
     let placeholder: String
     let font: NSFont
+    /// While true the field ignores the mouse, so an ⌥-drag reaches
+    /// the placement's move gesture instead of selecting text.
+    let passesMouseThrough: Bool
     let onChange: (String) -> Void
     /// Return, Esc, Tab, or focus moving elsewhere. May be called more
     /// than once per session by AppKit; the Coordinator coalesces it.
@@ -53,6 +56,7 @@ struct InlineTextField: NSViewRepresentable {
             ]
         )
         field.delegate = context.coordinator
+        field.passesMouseThrough = passesMouseThrough
         // Fill whatever width the box offers rather than growing with
         // the text; long text scrolls inside the box instead.
         field.setContentHuggingPriority(.init(1), for: .horizontal)
@@ -62,6 +66,7 @@ struct InlineTextField: NSViewRepresentable {
 
     func updateNSView(_ field: FocusingTextField, context: Context) {
         context.coordinator.parent = self
+        field.passesMouseThrough = passesMouseThrough
         if field.font != font {
             // Zoom or an inspector style change mid-edit.
             field.font = font
@@ -130,6 +135,15 @@ struct InlineTextField: NSViewRepresentable {
 /// a window. Deferred one turn so SwiftUI has finished the update that
 /// inserted it before the responder chain changes.
 final class FocusingTextField: NSTextField {
+    var passesMouseThrough = false
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Checked live as well as via the flag: the click that starts
+        // an ⌥-drag can arrive before SwiftUI has pushed the update.
+        if passesMouseThrough || NSEvent.modifierFlags.contains(.option) { return nil }
+        return super.hitTest(point)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil else { return }

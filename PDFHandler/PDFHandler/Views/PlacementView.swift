@@ -6,7 +6,7 @@
 //
 //  Interaction model (DocuSign-style):
 //    • click        → select (checkboxes also toggle)
-//    • drag         → move
+//    • drag         → move (⌥-drag also moves a field being edited)
 //    • corner knob  → resize (aspect kept for images / checkboxes;
 //                     text fields resize freely and their font scales
 //                     with the box height)
@@ -84,10 +84,13 @@ struct PlacementView: View {
             }
             .simultaneousGesture(editTap)
             .simultaneousGesture(selectTap)
-            .gesture(bodyDrag, including: isEditing ? .subviews : .all)
+            // ⌥ opens an editing field to the move drag; a drag already
+            // under way stays live even if ⌥ is let go mid-move.
+            .gesture(bodyDrag, including: isEditing && !appState.isOptionHeld && dragStart == nil
+                     ? .subviews : .all)
             .onHover { hovering in
                 isHovering = hovering
-                guard !isEditing else { return }
+                guard !isEditing || appState.isOptionHeld else { return }
                 if hovering, dragStart == nil {
                     NSCursor.openHand.set()
                 } else if !hovering, dragStart == nil {
@@ -95,6 +98,12 @@ struct PlacementView: View {
                 }
             }
             .position(x: rect.midX, y: rect.midY)
+            .onChange(of: appState.isOptionHeld) { held in
+                // Pressing ⌥ over a field being edited swaps the
+                // I-beam for the move cursor (and back on release).
+                guard isHovering, isEditing, dragStart == nil else { return }
+                (held ? NSCursor.openHand : NSCursor.iBeam).set()
+            }
             .onAppear {
                 // A freshly dropped, still-empty text box goes straight
                 // into editing so the user can just start typing.
@@ -156,6 +165,7 @@ struct PlacementView: View {
                 initialText: text,
                 placeholder: "Text",
                 font: style.font.nsFont(size: fontSize),
+                passesMouseThrough: appState.isOptionHeld,
                 onChange: onEdit,
                 onEnd: {
                     // AppKit can report the end of an edit late, e.g.

@@ -72,7 +72,7 @@ struct FieldToolbarView: View {
                            missing: "No initials yet — click the page to create them.",
                            hasAsset: appState.activeInitialsID != nil)
         case .date, .freeText:
-            Text("Click the page to place. Double-click the field to edit its text; ⌫ deletes, arrows nudge.")
+            Text("Click the page to place. Double-click the field to edit its text; ⌥-drag moves it while editing; ⌫ deletes, arrows nudge.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .checkbox:
