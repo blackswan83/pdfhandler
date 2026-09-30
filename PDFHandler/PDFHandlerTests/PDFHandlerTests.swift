@@ -465,4 +465,145 @@ final class PDFHandlerTests: XCTestCase {
         let cg = try XCTUnwrap(ctx.makeImage())
         return NSImage(cgImage: cg, size: NSSize(width: width, height: height))
     }
+
+    // MARK: - Editable save (form fields)
+
+    /// The full editable-save flow: a text placement must come back as
+    /// a real AcroForm text widget carrying the same text, sitting
+    /// exactly where the preview showed the field. The math is
+    /// display → raw (annotation space) → display again.
+    func testWriteEditableProducesTextWidgetAtPreviewPosition() throws {
+        let source = try makeOnePageDocument()
+        let normalized = CGRect(x: 0.2, y: 0.3, width: 0.4, height: 0.05)
+        let placement = Placement(
+            content: .freeText(text: "Hello", style: .default),
+            pageIndex: 0,
+            normalizedRect: normalized
+        )
+
+        let outURL = try writeEditable(source, placements: [placement])
+        let out = try XCTUnwrap(PDFDocument(url: outURL))
+        let page = try XCTUnwrap(out.page(at: 0))
+        let widgets = page.annotations.filter {
+            $0.widgetFieldType == .text
+        }
+        let widget = try XCTUnwrap(widgets.first, "expected exactly one text widget")
+        XCTAssertEqual(widgets.count, 1)
+        XCTAssertEqual(widget.widgetStringValue, "Hello")
+
+        // Stored bounds are raw; map them back to display space and
+        // compare against where the preview showed the field.
+        let expected = PDFFlattener.pdfRect(
+            for: normalized, displaySize: page.displaySize
+        )
+        let restored = PDFFlattener.displayRect(forRawRect: widget.bounds, page: page)
+        XCTAssertEqual(restored.minX, expected.minX, accuracy: 0.5)
+        XCTAssertEqual(restored.minY, expected.minY, accuracy: 0.5)
+        XCTAssertEqual(restored.width, expected.width, accuracy: 0.5)
+        XCTAssertEqual(restored.height, expected.height, accuracy: 0.5)
+    }
+
+    /// Empty text boxes must still become fillable fields — that is
+    /// the point of the editable save.
+    func testWriteEditableEmptyTextBecomesBlankFillableField() throws {
+        let source = try makeOnePageDocument()
+        let placement = Placement(
+            content: .freeText(text: "", style: .default),
+            pageIndex: 0,
+            normalizedRect: CGRect(x: 0.1, y: 0.1, width: 0.3, height: 0.05)
+        )
+
+        let outURL = try writeEditable(source, placements: [placement])
+        let out = try XCTUnwrap(PDFDocument(url: outURL))
+        let page = try XCTUnwrap(out.page(at: 0))
+        let widgets = page.annotations.filter {
+            $0.widgetFieldType == .text
+        }
+        XCTAssertEqual(widgets.count, 1)
+        XCTAssertEqual(widgets.first?.widgetStringValue ?? "", "")
+    }
+
+    /// Checkboxes and signatures are visual-only in the editable save:
+    /// they are flattened, never turned into widgets.
+    func testWriteEditableLeavesNonTextPlacementsFlattened() throws {
+        let source = try makeOnePageDocument()
+        let placements = [
+            Placement(
+                content: .checkbox(isChecked: true),
+                pageIndex: 0,
+                normalizedRect: CGRect(x: 0.1, y: 0.1, width: 0.03, height: 0.03)
+            ),
+            Placement(
+                content: .date(text: "June 6, 2026", style: .default),
+                pageIndex: 0,
+                normalizedRect: CGRect(x: 0.2, y: 0.2, width: 0.3, height: 0.05)
+            ),
+        ]
+
+        let outURL = try writeEditable(source, placements: placements)
+        let out = try XCTUnwrap(PDFDocument(url: outURL))
+        let page = try XCTUnwrap(out.page(at: 0))
+        let widgets = page.annotations.filter {
+            $0.widgetFieldType == .text
+        }
+        XCTAssertEqual(widgets.count, 1, "only the date becomes a widget")
+        XCTAssertEqual(widgets.first?.widgetStringValue, "June 6, 2026")
+    }
+
+    /// rawRect/displayRect must be exact inverses for every quarter
+    /// turn — this is the rotation handling PDFKit does NOT do for
+    /// annotation bounds (same raw/display split as bounds(for:)).
+    func testRawRectAndDisplayRectRoundTripForEveryRotation() {
+        let page = PDFPage()
+        let displayRect = CGRect(x: 40, y: 50, width: 120, height: 20)
+
+        for rotation in [0, 90, 180, 270] {
+            page.rotation = rotation
+            let raw = PDFFlattener.rawRect(forDisplayRect: displayRect, page: page)
+            let restored = PDFFlattener.displayRect(forRawRect: raw, page: page)
+            XCTAssertEqual(restored, displayRect, "rotation \(rotation)")
+        }
+    }
+
+    /// Anchor for the rotation math: mapping the full display page
+    /// back to raw space must yield the media box itself.
+    func testRawRectOfFullDisplayPageIsMediaBox() {
+        let page = PDFPage()
+        let mediaBox = page.bounds(for: .mediaBox)
+
+        for rotation in [0, 90, 180, 270] {
+            page.rotation = rotation
+            let raw = PDFFlattener.rawRect(
+                forDisplayRect: CGRect(origin: .zero, size: page.displaySize),
+                page: page
+            )
+            XCTAssertEqual(raw.minX, mediaBox.minX, accuracy: 0.01, "rotation \(rotation)")
+            XCTAssertEqual(raw.minY, mediaBox.minY, accuracy: 0.01, "rotation \(rotation)")
+            XCTAssertEqual(raw.width, mediaBox.width, accuracy: 0.01, "rotation \(rotation)")
+            XCTAssertEqual(raw.height, mediaBox.height, accuracy: 0.01, "rotation \(rotation)")
+        }
+    }
+
+    // MARK: - Editable-save helpers
+
+    private func makeOnePageDocument() throws -> PDFDocument {
+        let document = PDFDocument()
+        document.insert(PDFPage(), at: 0)
+        return document
+    }
+
+    private func writeEditable(
+        _ document: PDFDocument,
+        placements: [Placement]
+    ) throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".pdf")
+        try PDFFlattener().writeEditable(
+            document: document,
+            placements: placements,
+            signatures: [],
+            to: url
+        )
+        return url
+    }
 }
