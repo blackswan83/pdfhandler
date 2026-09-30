@@ -255,6 +255,11 @@ final class AppState: ObservableObject {
     /// Also write a copy with every field except the signature and
     /// initials images — the "filled but not yet signed" version.
     @AppStorage("save.alsoUnsignedCopy") var alsoSaveUnsignedCopy: Bool = false
+    /// Write added date / free-text fields as editable PDF form fields
+    /// instead of burning them into the page, so the saved document's
+    /// text can still be changed in Preview / Acrobat. Signature and
+    /// initials images are always flattened; checkboxes stay visual.
+    @AppStorage("save.keepTextEditable") var keepTextEditable: Bool = true
 
     // MARK: Compress mode
     @Published var compressSourceURL: URL? {
@@ -694,10 +699,17 @@ final class AppState: ObservableObject {
         let signedTemp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
         var filledTemp: URL?
         do {
-            try flattener.flatten(
-                document: document, placements: placements,
-                signatures: signatures, to: signedTemp
-            )
+            if keepTextEditable {
+                try flattener.writeEditable(
+                    document: document, placements: placements,
+                    signatures: signatures, to: signedTemp
+                )
+            } else {
+                try flattener.flatten(
+                    document: document, placements: placements,
+                    signatures: signatures, to: signedTemp
+                )
+            }
             // Optional "filled but not signed" companion: every field
             // except the signature and initials images. The untouched
             // original remains the third copy.
@@ -705,10 +717,17 @@ final class AppState: ObservableObject {
                 let unsigned = placements.filter { !$0.content.isImageBacked }
                 if !unsigned.isEmpty {
                     let temp = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pdf")
-                    try flattener.flatten(
-                        document: document, placements: unsigned,
-                        signatures: signatures, to: temp
-                    )
+                    if keepTextEditable {
+                        try flattener.writeEditable(
+                            document: document, placements: unsigned,
+                            signatures: signatures, to: temp
+                        )
+                    } else {
+                        try flattener.flatten(
+                            document: document, placements: unsigned,
+                            signatures: signatures, to: temp
+                        )
+                    }
                     filledTemp = temp
                 }
             }

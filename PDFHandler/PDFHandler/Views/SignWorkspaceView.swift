@@ -180,6 +180,8 @@ struct SignWorkspaceView: View {
                 Divider()
                 Toggle("Also save an unsigned filled copy", isOn: $appState.alsoSaveUnsignedCopy)
                 Divider()
+                Toggle("Keep added text editable", isOn: $appState.keepTextEditable)
+                Divider()
                 Text("The original is never modified.")
             } label: {
                 Label("Save signed PDF", systemImage: "square.and.arrow.down")

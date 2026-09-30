@@ -44,6 +44,159 @@ struct PDFFlattener {
         static let textInsetFactor: CGFloat = 0.12
     }
 
+    /// Writes a copy of the (in-memory) `document` in which the added
+    /// text fields are REAL, editable PDF form fields instead of being
+    /// burned into the page: signature / initials images and checkboxes
+    /// are still flattened (an image can't be "editable"), but every
+    /// date / freeText placement becomes an AcroForm text widget
+    /// carrying the same text, font size, and rect as the preview, so
+    /// the recipient can tweak the wording in Preview / Acrobat.
+    /// Empty text boxes are included as blank fillable fields.
+    ///
+    /// Two passes by necessity: the flatten pass renders through a
+    /// CGPDF context, which drops annotations, so the widgets are
+    /// attached afterwards to the flattened copy.
+    func writeEditable(
+        document: PDFDocument,
+        placements: [Placement],
+        signatures: [SavedSignature],
+        to outputURL: URL
+    ) throws {
+        let textPlacements = placements.filter { $0.content.textPayload != nil }
+        let visualPlacements = placements.filter { $0.content.textPayload == nil }
+
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".pdf")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        try flatten(
+            document: document,
+            placements: visualPlacements,
+            signatures: signatures,
+            to: temp
+        )
+
+        guard let editable = PDFDocument(url: temp) else {
+            throw PDFFlattenerError.cannotOpen
+        }
+        for placement in textPlacements {
+            guard let page = editable.page(at: placement.pageIndex) else { continue }
+            page.addAnnotation(textWidget(for: placement, on: page))
+        }
+
+        guard editable.write(to: outputURL) else {
+            throw PDFFlattenerError.writeFailed(outputURL)
+        }
+    }
+
+    /// An AcroForm text widget mirroring a text placement. PDFKit
+    /// expects annotation bounds in RAW media-box space and applies
+    /// /Rotate itself at render and write time — the same split
+    /// documented in PDFPageGeometry — so the display-space rect is
+    /// converted back through `rawRect`.
+    private func textWidget(for placement: Placement, on page: PDFPage) -> PDFAnnotation {
+        let display = Self.pdfRect(for: placement.normalizedRect, displaySize: page.displaySize)
+        guard let payload = placement.content.textPayload else {
+            // Unreachable: callers filter to text placements first.
+            return PDFAnnotation(bounds: .zero, forType: .widget, withProperties: nil)
+        }
+
+        let annotation = PDFAnnotation(
+            bounds: Self.rawRect(forDisplayRect: display, page: page),
+            forType: .widget,
+            withProperties: nil
+        )
+        annotation.widgetFieldType = .text
+        annotation.widgetStringValue = payload.text
+        annotation.fieldName = "pdfhandler-text-\(placement.id.uuidString)"
+        // Same sizing math as drawText: auto-fit derives from the box
+        // height in page points; a manual size is used unscaled.
+        let fontSize = payload.style.autoFit
+            ? payload.style.resolvedSize(boxHeight: display.height)
+            : payload.style.size
+        annotation.font = payload.style.font.nsFont(size: fontSize)
+        annotation.fontColor = .black
+        annotation.backgroundColor = .clear
+        annotation.alignment = .left
+        return annotation
+    }
+
+    /// Convert a display-space rect (bottom-left origin, /Rotate
+    /// applied) back to RAW media-box space — the coordinate system
+    /// PDFKit stores annotation bounds in. Exact inverse of
+    /// `displayRect(forRawRect:page:)`.
+    static func rawRect(forDisplayRect rect: CGRect, page: PDFPage) -> CGRect {
+        let raw = page.bounds(for: .mediaBox)
+        let o = raw.origin
+        switch page.displayRotation {
+        case 90:
+            return CGRect(
+                x: o.x + raw.width - rect.maxY,
+                y: o.y + rect.minX,
+                width: rect.height,
+                height: rect.width
+            )
+        case 180:
+            return CGRect(
+                x: o.x + raw.width - rect.maxX,
+                y: o.y + raw.height - rect.maxY,
+                width: rect.width,
+                height: rect.height
+            )
+        case 270:
+            return CGRect(
+                x: o.x + rect.minY,
+                y: o.y + raw.height - rect.maxX,
+                width: rect.height,
+                height: rect.width
+            )
+        default:
+            return CGRect(
+                x: o.x + rect.minX,
+                y: o.y + rect.minY,
+                width: rect.width,
+                height: rect.height
+            )
+        }
+    }
+
+    /// Forward direction of `rawRect`: raw media-box space → display
+    /// space. Used by the probe tests to verify a stored widget's
+    /// bounds land where the preview showed the field.
+    static func displayRect(forRawRect rect: CGRect, page: PDFPage) -> CGRect {
+        let raw = page.bounds(for: .mediaBox)
+        let o = raw.origin
+        switch page.displayRotation {
+        case 90:
+            return CGRect(
+                x: rect.minY - o.y,
+                y: o.x + raw.width - rect.maxX,
+                width: rect.height,
+                height: rect.width
+            )
+        case 180:
+            return CGRect(
+                x: o.x + raw.width - rect.maxX,
+                y: o.y + raw.height - rect.maxY,
+                width: rect.width,
+                height: rect.height
+            )
+        case 270:
+            return CGRect(
+                x: o.y + raw.height - rect.maxY,
+                y: rect.minX - o.x,
+                width: rect.height,
+                height: rect.width
+            )
+        default:
+            return CGRect(
+                x: rect.minX - o.x,
+                y: rect.minY - o.y,
+                width: rect.width,
+                height: rect.height
+            )
+        }
+    }
+
     /// Writes a copy of the (in-memory) `document` — the exact pages
     /// the user previewed — with every `placement` drawn into the
     /// page, to exactly `outputURL`. Choosing where that is (next to
