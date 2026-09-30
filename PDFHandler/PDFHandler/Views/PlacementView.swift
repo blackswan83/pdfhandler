@@ -6,7 +6,8 @@
 //
 //  Interaction model (DocuSign-style):
 //    • click        → select (checkboxes also toggle)
-//    • drag         → move (⌥-drag also moves a field being edited)
+//    • drag         → move (⌥-drag drags out a duplicate; while
+//                     editing, ⌥-drag moves the field instead)
 //    • corner knob  → resize (aspect kept for images / checkboxes;
 //                     text fields resize freely and their font scales
 //                     with the box height)
@@ -33,6 +34,9 @@ struct PlacementView: View {
 
     @State private var dragStart: CGRect?
     @State private var preDragPlacements: [Placement]?
+    /// Set when a ⌥-drag spawned a copy: the gesture keeps driving the
+    /// copy (by id) while the original stays where it was.
+    @State private var dragTargetID: UUID?
     @State private var isHovering = false
 
     private var pixelRect: CGRect {
@@ -92,17 +96,24 @@ struct PlacementView: View {
                 isHovering = hovering
                 guard !isEditing || appState.isOptionHeld else { return }
                 if hovering, dragStart == nil {
-                    NSCursor.openHand.set()
+                    // The "+" copy cursor announces the ⌥-drag
+                    // duplicate on fields that aren't being edited.
+                    (appState.isOptionHeld && !isEditing ? NSCursor.dragCopy : NSCursor.openHand).set()
                 } else if !hovering, dragStart == nil {
                     NSCursor.arrow.set()
                 }
             }
             .position(x: rect.midX, y: rect.midY)
             .onChange(of: appState.isOptionHeld) { held in
-                // Pressing ⌥ over a field being edited swaps the
-                // I-beam for the move cursor (and back on release).
-                guard isHovering, isEditing, dragStart == nil else { return }
-                (held ? NSCursor.openHand : NSCursor.iBeam).set()
+                guard isHovering, dragStart == nil else { return }
+                if isEditing {
+                    // Pressing ⌥ over a field being edited swaps the
+                    // I-beam for the move cursor (and back on release).
+                    (held ? NSCursor.openHand : NSCursor.iBeam).set()
+                } else {
+                    // …and over any other field, for the copy cursor.
+                    (held ? NSCursor.dragCopy : NSCursor.openHand).set()
+                }
             }
             .onAppear {
                 // A freshly dropped, still-empty text box goes straight
@@ -282,6 +293,15 @@ struct PlacementView: View {
                     preDragPlacements = appState.placements
                     appState.selectedPlacementID = placement.id
                     NSCursor.closedHand.set()
+                    // ⌥-drag on a field that isn't being edited drags
+                    // out a copy and leaves the original in place. (⌥
+                    // while editing still just moves — see bodyDrag's
+                    // `including:` above and InlineTextField.) Decided
+                    // at drag start, like Finder: pressing ⌥ later mid
+                    // -move doesn't flip the meaning of the gesture.
+                    if !isEditing, NSEvent.modifierFlags.contains(.option) {
+                        dragTargetID = appState.duplicatePlacementForDrag(id: placement.id)
+                    }
                 }
                 guard let start = dragStart else { return }
                 emitLive(
@@ -292,7 +312,7 @@ struct PlacementView: View {
                     size: start.size
                 )
             }
-            .onEnded { _ in finishDrag(label: "Move") }
+            .onEnded { _ in finishDrag(label: dragTargetID == nil ? "Move" : "Duplicate") }
     }
 
     private var resizeDrag: some Gesture {
@@ -339,7 +359,8 @@ struct PlacementView: View {
         }
         dragStart = nil
         preDragPlacements = nil
-        appState.commitPlacementSize(id: placement.id)
+        appState.commitPlacementSize(id: dragTargetID ?? placement.id)
+        dragTargetID = nil
         NSCursor.arrow.set()
     }
 
@@ -355,7 +376,7 @@ struct PlacementView: View {
             width: size.width / pageSize.width,
             height: size.height / pageSize.height
         )
-        appState.updatePlacementLive(id: placement.id, normalizedRect: normalized)
+        appState.updatePlacementLive(id: dragTargetID ?? placement.id, normalizedRect: normalized)
     }
 }
 
