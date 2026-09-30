@@ -34,8 +34,6 @@ struct PlacementView: View {
     @State private var dragStart: CGRect?
     @State private var preDragPlacements: [Placement]?
     @State private var isHovering = false
-    @State private var draft: String = ""
-    @FocusState private var textFocused: Bool
 
     private var pixelRect: CGRect {
         CGRect(
@@ -154,26 +152,20 @@ struct PlacementView: View {
             .map { Font.custom($0, fixedSize: fontSize) } ?? .system(size: fontSize)
 
         if isEditing {
-            TextField("Text", text: Binding(
-                get: { draft },
-                set: { draft = $0; onEdit($0) }
-            ))
-            .textFieldStyle(.plain)
-            .font(font)
-            .foregroundStyle(Color.black)
-            .padding(.horizontal, inset)
-            .focused($textFocused)
-            .onSubmit { appState.editingPlacementID = nil }
-            .onExitCommand { appState.editingPlacementID = nil }
-            .onAppear {
-                draft = text
-                DispatchQueue.main.async { textFocused = true }
-            }
-            .onChange(of: textFocused) { focused in
-                if !focused, isEditing {
-                    appState.editingPlacementID = nil
+            InlineTextField(
+                initialText: text,
+                placeholder: "Text",
+                font: style.font.nsFont(size: fontSize),
+                onChange: onEdit,
+                onEnd: {
+                    // AppKit can report the end of an edit late, e.g.
+                    // after another field has already started one.
+                    if appState.editingPlacementID == placement.id {
+                        appState.editingPlacementID = nil
+                    }
                 }
-            }
+            )
+            .padding(.horizontal, inset)
         } else {
             Text(text.isEmpty ? "Text" : text)
                 .font(font)
