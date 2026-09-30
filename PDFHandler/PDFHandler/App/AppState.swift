@@ -92,6 +92,10 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// True while ⌥ is held. Option-drag moves a field even when it is
+    /// being edited, where a plain drag would select text instead.
+    @Published var isOptionHeld = false
+
     /// The text placement currently being edited inline (nil when no
     /// edit session is active). Setting it manages the undo snapshot:
     /// the whole edit session becomes a single undo step.

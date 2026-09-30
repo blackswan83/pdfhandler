@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 struct SignWorkspaceView: View {
     @EnvironmentObject var appState: AppState
     @State private var keyMonitor: Any?
+    @State private var modifierMonitor: Any?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,12 +68,27 @@ struct SignWorkspaceView: View {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             assumingMainActor { handleKeyDown(event) } ? nil : event
         }
+        // ⌥ state for option-drag. Mouse-downs resync it, since a
+        // release while another app was frontmost never reaches us.
+        modifierMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.flagsChanged, .leftMouseDown]
+        ) { event in
+            let held = event.modifierFlags.contains(.option)
+            assumingMainActor {
+                if appState.isOptionHeld != held { appState.isOptionHeld = held }
+            }
+            return event
+        }
     }
 
     private func removeKeyMonitor() {
         if let monitor = keyMonitor {
             NSEvent.removeMonitor(monitor)
             keyMonitor = nil
+        }
+        if let monitor = modifierMonitor {
+            NSEvent.removeMonitor(monitor)
+            modifierMonitor = nil
         }
     }
 
