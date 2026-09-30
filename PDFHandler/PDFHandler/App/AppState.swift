@@ -542,6 +542,26 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Live duplicate for an in-progress ⌥-drag. Appends an exact copy
+    /// with a fresh id (stacked on the original), selects it, and
+    /// returns the new id so the gesture drags the copy while the
+    /// original stays put. Registers NO undo step of its own — the
+    /// owning gesture captured its snapshot before calling this, so
+    /// finishInteraction(label:before:) folds the whole ⌥-drag into a
+    /// single "Duplicate" undo step.
+    @discardableResult
+    func duplicatePlacementForDrag(id: UUID) -> UUID? {
+        guard let original = placements.first(where: { $0.id == id }) else { return nil }
+        let copy = Placement(
+            content: original.content,
+            pageIndex: original.pageIndex,
+            normalizedRect: original.normalizedRect
+        )
+        placements.append(copy)
+        selectedPlacementID = copy.id
+        return copy.id
+    }
+
     /// Live mutation during a drag / resize. Registers NO undo step —
     /// the owning gesture captures a snapshot when it starts and calls
     /// finishInteraction(label:before:) once when it ends.
